@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SSRAuthState } from '../middleware/check-auth';
 import { useI18n } from '../i18n-context';
 import { useToast } from '../toast-context';
+import addIcon from '../assets/material-icons/round-add-button.svg';
+import infoIcon from '../assets/material-icons/round-info-button.svg';
 
 type Overview = {
     users: number;
@@ -91,6 +93,8 @@ export default function AdminPage({ auth }: AdminPageProps) {
     const [downloads, setDownloads] = useState<AdminDownload[]>([]);
     const [maxUploadMb, setMaxUploadMb] = useState(16);
     const [services, setServices] = useState<Service[]>([]);
+    const [showServiceInfo, setShowServiceInfo] = useState(false);
+    const [showServiceForm, setShowServiceForm] = useState(false);
     const [newService, setNewService] = useState({
         name: '',
         address: '',
@@ -473,6 +477,33 @@ export default function AdminPage({ auth }: AdminPageProps) {
                 ))}
             </div>
 
+            {tab === 'services' && (
+                <div className="mt-3 flex justify-end gap-2">
+                    <button
+                        className={`rounded-lg border p-2 transition hover:bg-white/5 ${showServiceInfo ? 'bg-white/10' : ''}`}
+                        type="button"
+                        aria-label={t('Service-Information')}
+                        aria-expanded={showServiceInfo}
+                        aria-controls="service-status-info"
+                        title={t('Service-Information')}
+                        onClick={() => setShowServiceInfo((visible) => !visible)}
+                    >
+                        <img className="h-5 w-5 invert" src={infoIcon} alt="" />
+                    </button>
+                    <button
+                        className={`rounded-lg border p-2 transition hover:bg-white/5 ${showServiceForm ? 'bg-white/10' : ''}`}
+                        type="button"
+                        aria-label={t('Service hinzufügen')}
+                        aria-expanded={showServiceForm}
+                        aria-controls="service-create-form"
+                        title={t('Service hinzufügen')}
+                        onClick={() => setShowServiceForm((visible) => !visible)}
+                    >
+                        <img className="h-5 w-5 invert" src={addIcon} alt="" />
+                    </button>
+                </div>
+            )}
+
             {loading ? <p className="theme-muted py-10">{t('Admin-Daten werden geladen...')}</p> : (
                 <>
                     {tab === 'overview' && overview && (
@@ -753,74 +784,78 @@ export default function AdminPage({ auth }: AdminPageProps) {
 
                     {tab === 'services' && (
                         <div className="mt-6 space-y-4">
-                            <article className="theme-panel space-y-4 rounded-2xl border p-5">
-                                <div>
-                                    <h2 className="theme-text font-semibold">{t('Service-Statusmeldungen')}</h2>
-                                    <p className="theme-muted mt-2 text-sm">
-                                        {t('Jeder Service verwendet einen eigenen API-Schlüssel. Schlüssel werden nur einmal angezeigt und in der Datenbank ausschließlich als SHA-256-Hash gespeichert. Ohne manuelle Überschreibung wird ein Service nach 60 Sekunden ohne Heartbeat einmalig auf offline gesetzt.')}
-                                    </p>
-                                </div>
-                                <div>
-                                    <p className="theme-muted text-sm">{t('Sende alle 30 Sekunden per HTTPS einen')} <code className="font-mono">PUT /api/services/status</code> <span>{t('mit')}</span> <code className="font-mono">Authorization: Bearer &lt;SCHLÜSSEL&gt;</code>:</p>
-                                    <pre className="theme-input mt-2 overflow-x-auto rounded-lg border p-3 text-xs"><code>{language === 'de'
-                                        ? '{ "status": "online", "details": "Server läuft" }'
-                                        : '{ "status": "online", "details": "Server is running" }'}</code></pre>
-                                </div>
-                            </article>
-                            <form className="theme-panel grid gap-3 rounded-2xl border p-5 sm:grid-cols-2" onSubmit={createService}>
-                                <h2 className="theme-text font-semibold sm:col-span-2">{t('Service hinzufügen')}</h2>
-                                <input
-                                    className="theme-input rounded-lg border px-3 py-2 text-sm"
-                                    value={newService.name}
-                                    onChange={(event) => setNewService((current) => ({ ...current, name: event.target.value }))}
-                                    placeholder={t('Service-Name')}
-                                    aria-label={t('Service-Name')}
-                                    maxLength={64}
-                                    required
-                                />
-                                <input
-                                    className="theme-input rounded-lg border px-3 py-2 text-sm"
-                                    value={newService.address}
-                                    onChange={(event) => setNewService((current) => ({ ...current, address: event.target.value }))}
-                                    placeholder={t('Serveradresse')}
-                                    aria-label={t('Serveradresse')}
-                                    maxLength={255}
-                                    required
-                                />
-                                <select
-                                    className="theme-input rounded-lg border px-3 py-2 text-sm"
-                                    value={newService.status}
-                                    onChange={(event) => setNewService((current) => ({ ...current, status: event.target.value as Service['status'] }))}
-                                    aria-label={t('Service-Status')}
-                                >
-                                    <option value="online">{t('Online')}</option>
-                                    <option value="offline">{t('Offline')}</option>
-                                    <option value="maintenance">{t('Wartung')}</option>
-                                </select>
-                                <input
-                                    className="theme-input rounded-lg border px-3 py-2 text-sm"
-                                    value={newService.details}
-                                    onChange={(event) => setNewService((current) => ({ ...current, details: event.target.value }))}
-                                    placeholder={t('Status-Details')}
-                                    aria-label={t('Status-Details')}
-                                    maxLength={255}
-                                />
-                                <label className="theme-muted flex items-center gap-2 text-sm sm:col-span-2">
+                            {showServiceInfo && (
+                                <article id="service-status-info" className="theme-panel space-y-4 rounded-2xl border p-5">
+                                    <div>
+                                        <h2 className="theme-text font-semibold">{t('Service-Statusmeldungen')}</h2>
+                                        <p className="theme-muted mt-2 text-sm">
+                                            {t('Jeder Service verwendet einen eigenen API-Schlüssel. Schlüssel werden nur einmal angezeigt und in der Datenbank ausschließlich als SHA-256-Hash gespeichert. Ohne manuelle Überschreibung wird ein Service nach 60 Sekunden ohne Heartbeat einmalig auf offline gesetzt.')}
+                                        </p>
+                                    </div>
+                                    <div>
+                                        <p className="theme-muted text-sm">{t('Sende alle 30 Sekunden per HTTPS einen')} <code className="font-mono">PUT /api/services/status</code> <span>{t('mit')}</span> <code className="font-mono">Authorization: Bearer &lt;SCHLÜSSEL&gt;</code>:</p>
+                                        <pre className="theme-input mt-2 overflow-x-auto rounded-lg border p-3 text-xs"><code>{language === 'de'
+                                            ? '{ "status": "online", "details": "Server läuft" }'
+                                            : '{ "status": "online", "details": "Server is running" }'}</code></pre>
+                                    </div>
+                                </article>
+                            )}
+                            {showServiceForm && (
+                                <form id="service-create-form" className="theme-panel grid gap-3 rounded-2xl border p-5 sm:grid-cols-2" onSubmit={createService}>
+                                    <h2 className="theme-text font-semibold sm:col-span-2">{t('Service hinzufügen')}</h2>
                                     <input
-                                        type="checkbox"
-                                        checked={newService.manualOverride}
-                                        onChange={(event) => setNewService((current) => ({ ...current, manualOverride: event.target.checked }))}
+                                        className="theme-input rounded-lg border px-3 py-2 text-sm"
+                                        value={newService.name}
+                                        onChange={(event) => setNewService((current) => ({ ...current, name: event.target.value }))}
+                                        placeholder={t('Service-Name')}
+                                        aria-label={t('Service-Name')}
+                                        maxLength={64}
+                                        required
                                     />
-                                    {t('Manueller Status-Override')}
-                                </label>
-                                <button
-                                    className="w-fit rounded-lg bg-sky-300 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50 sm:col-span-2"
-                                    type="submit"
-                                    disabled={saving}
-                                >
-                                    {t('Service hinzufügen und API-Schlüssel erstellen')}
-                                </button>
-                            </form>
+                                    <input
+                                        className="theme-input rounded-lg border px-3 py-2 text-sm"
+                                        value={newService.address}
+                                        onChange={(event) => setNewService((current) => ({ ...current, address: event.target.value }))}
+                                        placeholder={t('Serveradresse')}
+                                        aria-label={t('Serveradresse')}
+                                        maxLength={255}
+                                        required
+                                    />
+                                    <select
+                                        className="theme-input rounded-lg border px-3 py-2 text-sm"
+                                        value={newService.status}
+                                        onChange={(event) => setNewService((current) => ({ ...current, status: event.target.value as Service['status'] }))}
+                                        aria-label={t('Service-Status')}
+                                    >
+                                        <option value="online">{t('Online')}</option>
+                                        <option value="offline">{t('Offline')}</option>
+                                        <option value="maintenance">{t('Wartung')}</option>
+                                    </select>
+                                    <input
+                                        className="theme-input rounded-lg border px-3 py-2 text-sm"
+                                        value={newService.details}
+                                        onChange={(event) => setNewService((current) => ({ ...current, details: event.target.value }))}
+                                        placeholder={t('Status-Details')}
+                                        aria-label={t('Status-Details')}
+                                        maxLength={255}
+                                    />
+                                    <label className="theme-muted flex items-center gap-2 text-sm sm:col-span-2">
+                                        <input
+                                            type="checkbox"
+                                            checked={newService.manualOverride}
+                                            onChange={(event) => setNewService((current) => ({ ...current, manualOverride: event.target.checked }))}
+                                        />
+                                        {t('Manueller Status-Override')}
+                                    </label>
+                                    <button
+                                        className="w-fit rounded-lg bg-sky-300 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50 sm:col-span-2"
+                                        type="submit"
+                                        disabled={saving}
+                                    >
+                                        {t('Service hinzufügen und API-Schlüssel erstellen')}
+                                    </button>
+                                </form>
+                            )}
                             {services.map((service) => (
                                 <article key={service.id} className="theme-panel grid gap-3 rounded-2xl border p-5 sm:grid-cols-2">
                                     <input
