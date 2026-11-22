@@ -1,0 +1,16 @@
+{
+  "compilerOptions": { 
+    "paths": { 
+      "@tattyhost/SQLutils": ["./lib/SQLUtils/SQLUtils.ts"], 
+      "@tattyhost/TokenState": ["./lib/SQLUtils/TokenState.ts"],
+      "@tattyhost/CryptoUtils": ["./lib/CryptoUtils/CryptoUtils.ts"],
+    },
+  },
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.app.json" },
+    { "path": "./tsconfig.node.json" },
+    { "path": "./tsconfig.cryptoutils.json" },
+    { "path": "./tsconfig.sqlutils.json" }, 
+  ]
+}

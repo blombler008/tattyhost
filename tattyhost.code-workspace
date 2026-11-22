@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"editor.tabSize": 4, // Tab size
+		"editor.insertSpaces": true, // Use spaces for tab
+		"window.title": "${rootName}" // Set window title to workspace name
+	}
+}
