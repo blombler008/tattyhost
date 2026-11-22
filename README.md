@@ -86,24 +86,26 @@ LIMIT 50;
 
 ## Server status API
 
-An administrator can create or rotate the server-status API key in the
-**Admin Services → Serverstatus** section. The 64-character Base64 key is shown
-only in the response to that action; copy it directly into the reporting
-server's secret configuration. Tattyhost stores only its SHA-256 hash. Rotating
-or revoking the key immediately invalidates the previous key.
+Create each service in **Admin → Services**. Each service gets its own
+64-character Base64 API key, shown only when the service is created or its key
+is rotated. Tattyhost stores only the SHA-256 hash. Rotating a key immediately
+invalidates the previous one; deleting a service also deletes its key. Existing
+global server-status keys are not accepted by this service-specific API.
 
 Send a `PUT` request to `/api/services/status` over HTTPS with the key in the
-`Authorization` header. The `name` must identify an existing service;
-`status` must be `online`, `offline`, or `maintenance`. `details` is optional
-and limited to 255 characters.
+`Authorization` header. The key identifies the service, so the body does not
+include a `name`. `status` must be `online`, `offline`, or `maintenance`;
+`details` is optional and limited to 255 characters.
 
-Send a heartbeat about every 30 seconds. After 60 seconds without a report, the
-public status API reports the service as offline. Connected pages receive
-status changes through a server-sent events stream; the browser does not poll
-or reload the page. The server checks for heartbeat expiry while clients are
-connected and pushes the offline transition. Each heartbeat is recorded as an
-operational log; audit logs are written when the reported status or details
-change.
+Send a heartbeat about every 30 seconds. After 60 seconds without a report, a
+service without a manual override is persisted as offline once, with the
+details `Keine Statusmeldung seit über 60 Sekunden`. The next heartbeat clears
+that timeout detail if it omits `details`. A manual override makes the
+administrator's status and details authoritative: heartbeats and automatic
+timeouts do not change them until the override is disabled. Connected pages
+receive status changes through a server-sent events stream. Each heartbeat is
+recorded as an operational log; audit logs are written when the reported
+status or details change.
 
 PowerShell loop example (replace the status value with the result of your
 server's own health check):
@@ -112,7 +114,6 @@ server's own health check):
 $headers = @{ Authorization = "Bearer $env:TATTYHOST_STATUS_API_KEY" }
 while ($true) {
     $body = @{
-        name = "Minecraft"
         status = "online"
         details = "Server läuft"
     } | ConvertTo-Json
@@ -128,10 +129,10 @@ while ($true) {
 }
 ```
 
-Keep the key in a server-side secret store or environment variable. Do not put
-it in source control, browser code, command history, or logs. Successful
-requests are recorded in `application_logs`; audit entries are written when
-the reported status or details change.
+Keep each service key in a server-side secret store or environment variable.
+Do not put it in source control, browser code, command history, or logs.
+Successful requests are recorded in `application_logs`; audit entries are
+written when the reported status or details change.
 
 ## Protected file browser
 
@@ -210,7 +211,7 @@ Authentication types:
 | --- | --- | --- |
 | `GET /services` | Public | List services and their current status. A service with an expired heartbeat is returned as offline. |
 | `GET /services/events` | Public | Open a server-sent events stream. Sends an initial service snapshot and pushes changed statuses; clients reconnect automatically. |
-| `PUT /services/status` | Server API key | Report a service heartbeat with `{ "name": "Minecraft", "status": "online", "details": "..." }`. `details` is optional; statuses are `online`, `offline`, or `maintenance`. |
+| `PUT /services/status` | Per-service API key | Report a heartbeat with `{ "status": "online", "details": "..." }`. The key identifies the service; `details` is optional. Statuses are `online`, `offline`, or `maintenance`. |
 | `GET /downloads` | Public | List active download links. The `/downloads` website page itself still requires sign-in. |
 | `GET /downloads/file/:storageKey` | Public | Download an active uploaded file as an attachment. The storage key is a UUID. |
 | `GET /files?path=...` | File permission | List files and folders inside the configured downloads directory. `path` is an optional relative folder path. |
@@ -230,11 +231,11 @@ All routes in this section require an authenticated administrator session.
 | `PATCH /admin/users/:uuid/file-access` | Grant or revoke this user's protected file browser permission with `{ "enabled": true }`. Access is denied by default. |
 | `DELETE /admin/users/:uuid` | Delete a user account. An administrator cannot delete or demote their own account. |
 | `POST /admin/users/:uuid/password-reset` | Send a one-time password-reset link to the user's account email. An optional `{ "recipientEmail": "other@example.com" }` sends it to a custom address without changing the account email. |
-| `GET /admin/services` | List services for the admin page. |
-| `PUT /admin/services/:id` | Manually set `{ "status": "maintenance", "details": "..." }` for a service. |
-| `GET /admin/services/status-key` | Check whether a server status key is configured; returns creation time, never the key. |
-| `POST /admin/services/status-key` | Generate or rotate the key; returns the new key once. Rotation immediately invalidates the old key. |
-| `DELETE /admin/services/status-key` | Revoke the server status key. |
+| `GET /admin/services` | List services and per-service API-key configuration; never returns key material. |
+| `POST /admin/services` | Create `{ "name": "...", "address": "...", "status": "maintenance", "details": "" }` and its API key. The key is returned once. |
+| `PUT /admin/services/:id` | Update a service's `name`, `address`, `status`, `details`, and `manualOverride`. Setting `manualOverride` to `true` prevents heartbeats and timeouts from changing its status/details. |
+| `DELETE /admin/services/:id` | Delete a service and its associated API key. |
+| `POST /admin/services/:id/api-key` | Generate or rotate that service's API key; returns the new key once and immediately invalidates the old key. |
 | `GET /admin/downloads` | List all downloads, including inactive entries, and return the configured `maxUploadMb` limit. |
 | `PUT /admin/downloads/settings` | Set `{ "maxUploadMb": 16 }`; accepted values are integers from 1 through 512 MB. |
 | `POST /admin/downloads` | Create `{ "title": "...", "description": "...", "url": "https://..." }`. |

@@ -43,11 +43,9 @@ type Service = {
     address: string;
     status: 'online' | 'offline' | 'maintenance';
     details: string;
-};
-
-type ServiceStatusApiKey = {
-    configured: boolean;
-    createdAt: string | null;
+    manualOverride: boolean;
+    apiKeyConfigured: boolean;
+    apiKeyCreatedAt: string | null;
 };
 
 type ApiResult<T> = { success: boolean; error?: string } & T;
@@ -93,9 +91,15 @@ export default function AdminPage({ auth }: AdminPageProps) {
     const [downloads, setDownloads] = useState<AdminDownload[]>([]);
     const [maxUploadMb, setMaxUploadMb] = useState(16);
     const [services, setServices] = useState<Service[]>([]);
+    const [newService, setNewService] = useState({
+        name: '',
+        address: '',
+        status: 'maintenance' as Service['status'],
+        details: '',
+        manualOverride: false
+    });
     const [fileListingRules, setFileListingRules] = useState<FileListingRules | null>(null);
-    const [serviceStatusApiKey, setServiceStatusApiKey] = useState<ServiceStatusApiKey | null>(null);
-    const [revealedServiceStatusApiKey, setRevealedServiceStatusApiKey] = useState('');
+    const [revealedServiceApiKeys, setRevealedServiceApiKeys] = useState<Record<number, string>>({});
     const [search, setSearch] = useState('');
     const [newDownload, setNewDownload] = useState({ title: '', description: '', url: '' });
     const [uploadTitle, setUploadTitle] = useState('');
@@ -134,11 +138,6 @@ export default function AdminPage({ auth }: AdminPageProps) {
         setServices(data.services);
     }, []);
 
-    const loadServiceStatusApiKey = useCallback(async () => {
-        const data = await requestJson<ServiceStatusApiKey>('/api/admin/services/status-key');
-        setServiceStatusApiKey({ configured: data.configured, createdAt: data.createdAt || null });
-    }, []);
-
     const refresh = useCallback(async () => {
         setLoading(true);
         try {
@@ -147,15 +146,14 @@ export default function AdminPage({ auth }: AdminPageProps) {
                 loadUsers(),
                 loadDownloads(),
                 loadFileListingRules(),
-                loadServices(),
-                loadServiceStatusApiKey()
+                loadServices()
             ]);
         } catch (loadError) {
             toast(loadError instanceof Error ? loadError.message : 'Admin-Daten konnten nicht geladen werden', 'error');
         } finally {
             setLoading(false);
         }
-    }, [loadDownloads, loadFileListingRules, loadOverview, loadServices, loadServiceStatusApiKey, loadUsers, toast]);
+    }, [loadDownloads, loadFileListingRules, loadOverview, loadServices, loadUsers, toast]);
 
     useEffect(() => {
         void refresh();
@@ -357,21 +355,70 @@ export default function AdminPage({ auth }: AdminPageProps) {
         perform(
             () => requestJson(`/api/admin/services/${service.id}`, {
                 method: 'PUT',
-                body: JSON.stringify({ status: service.status, details: service.details })
+                body: JSON.stringify({
+                    name: service.name,
+                    address: service.address,
+                    status: service.status,
+                    details: service.details,
+                    manualOverride: service.manualOverride
+                })
             }),
             loadServices,
-            'Serverstatus gespeichert.'
+            'Service gespeichert.'
         );
 
-    const rotateServiceStatusApiKey = async () => {
-        if (serviceStatusApiKey?.configured &&
-            !window.confirm(t('Der bisherige Schlüssel wird sofort ungültig. Den Schlüssel wirklich neu erstellen?'))) return;
+    const createService = (event: React.FormEvent<HTMLFormElement>) => {
+        event.preventDefault();
+        setSaving(true);
+        void (async () => {
+            try {
+                const data = await requestJson<{ serviceId: number; apiKey: string }>('/api/admin/services', {
+                    method: 'POST',
+                    body: JSON.stringify(newService)
+                });
+                setNewService({
+                    name: '',
+                    address: '',
+                    status: 'maintenance',
+                    details: '',
+                    manualOverride: false
+                });
+                setRevealedServiceApiKeys((current) => ({ ...current, [data.serviceId]: data.apiKey }));
+                await loadServices();
+                toast('Service erstellt. Der API-Schlüssel wird nur jetzt angezeigt; kopiere ihn in die Serverkonfiguration.', 'success');
+            } catch (actionError) {
+                toast(actionError instanceof Error ? actionError.message : 'Service konnte nicht erstellt werden', 'error');
+            } finally {
+                setSaving(false);
+            }
+        })();
+    };
+
+    const deleteService = (service: Service) => {
+        if (!window.confirm(t('Service "{name}" wirklich löschen? Der zugehörige API-Schlüssel wird ungültig.', { name: service.name }))) return;
+        void perform(
+            () => requestJson(`/api/admin/services/${service.id}`, { method: 'DELETE' }),
+            async () => {
+                await loadServices();
+                setRevealedServiceApiKeys((current) => {
+                    const remaining = { ...current };
+                    delete remaining[service.id];
+                    return remaining;
+                });
+            },
+            'Service gelöscht.'
+        );
+    };
+
+    const rotateServiceApiKey = async (service: Service) => {
+        if (service.apiKeyConfigured &&
+            !window.confirm(t('Der bisherige Schlüssel für "{name}" wird sofort ungültig. Wirklich neu erstellen?', { name: service.name }))) return;
         setSaving(true);
         try {
-            const data = await requestJson<{ apiKey: string }>('/api/admin/services/status-key', { method: 'POST' });
-            setRevealedServiceStatusApiKey(data.apiKey);
-            await loadServiceStatusApiKey();
-            toast('Der Schlüssel wird nur jetzt angezeigt. Kopiere ihn direkt in die geheime Konfiguration deines Servers.', 'success');
+            const data = await requestJson<{ apiKey: string }>(`/api/admin/services/${service.id}/api-key`, { method: 'POST' });
+            setRevealedServiceApiKeys((current) => ({ ...current, [service.id]: data.apiKey }));
+            await loadServices();
+            toast('API-Schlüssel wird nur einmal angezeigt. Kopiere ihn direkt in die Konfiguration dieses Services.', 'success');
         } catch (actionError) {
             toast(actionError instanceof Error ? actionError.message : 'API-Schlüssel konnte nicht erstellt werden', 'error');
         } finally {
@@ -379,19 +426,11 @@ export default function AdminPage({ auth }: AdminPageProps) {
         }
     };
 
-    const revokeServiceStatusApiKey = () => {
-        if (!window.confirm(t('Der Serverstatus-API-Schlüssel wird sofort ungültig. Wirklich widerrufen?'))) return;
-        setRevealedServiceStatusApiKey('');
-        void perform(
-            () => requestJson('/api/admin/services/status-key', { method: 'DELETE' }),
-            loadServiceStatusApiKey,
-            'API-Schlüssel widerrufen.'
-        );
-    };
-
-    const copyServiceStatusApiKey = async () => {
+    const copyServiceApiKey = async (serviceId: number) => {
+        const apiKey = revealedServiceApiKeys[serviceId];
+        if (!apiKey) return;
         try {
-            await navigator.clipboard.writeText(revealedServiceStatusApiKey);
+            await navigator.clipboard.writeText(apiKey);
             toast('API-Schlüssel in die Zwischenablage kopiert.', 'success');
         } catch (copyError) {
             toast(copyError instanceof Error ? copyError.message : 'Kopieren in die Zwischenablage ist fehlgeschlagen', 'error');
@@ -716,73 +755,168 @@ export default function AdminPage({ auth }: AdminPageProps) {
                         <div className="mt-6 space-y-4">
                             <article className="theme-panel space-y-4 rounded-2xl border p-5">
                                 <div>
-                                    <h2 className="theme-text font-semibold">{t('Serverstatus API-Schlüssel')}</h2>
+                                    <h2 className="theme-text font-semibold">{t('Service-Statusmeldungen')}</h2>
                                     <p className="theme-muted mt-2 text-sm">
-                                        {t('Ein externer Server meldet seinen Status idealerweise alle 30 Sekunden. Nach 60 Sekunden ohne Meldung wird er automatisch als offline angezeigt. Der 64 Zeichen lange Schlüssel wird in der Datenbank nur als SHA-256-Hash gespeichert.')}
-                                    </p>
-                                    <p className="theme-muted mt-2 text-sm">
-                                        {t('Status: {status}', { status: serviceStatusApiKey?.configured ? t('Aktiv') : t('Nicht eingerichtet') })}
-                                        {serviceStatusApiKey?.createdAt && ` · ${t('erstellt')} ${new Date(serviceStatusApiKey.createdAt).toLocaleString(language === 'de' ? 'de-DE' : 'en-US')}`}
+                                        {t('Jeder Service verwendet einen eigenen API-Schlüssel. Schlüssel werden nur einmal angezeigt und in der Datenbank ausschließlich als SHA-256-Hash gespeichert. Ohne manuelle Überschreibung wird ein Service nach 60 Sekunden ohne Heartbeat einmalig auf offline gesetzt.')}
                                     </p>
                                 </div>
-                                <div className="flex flex-wrap gap-2">
-                                    <button
-                                        className="rounded-lg bg-sky-300 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50"
-                                        type="button"
-                                        disabled={saving}
-                                        onClick={() => void rotateServiceStatusApiKey()}
-                                    >
-                                        {serviceStatusApiKey?.configured ? t('Schlüssel neu erstellen') : t('Schlüssel erstellen')}
-                                    </button>
-                                    {serviceStatusApiKey?.configured && (
-                                        <button
-                                            className="rounded-lg border border-rose-400/20 px-4 py-2 text-sm text-rose-200 disabled:opacity-50"
-                                            type="button"
-                                            disabled={saving}
-                                            onClick={revokeServiceStatusApiKey}
-                                        >
-                                            {t('Widerrufen')}
-                                        </button>
-                                    )}
-                                </div>
-                                {revealedServiceStatusApiKey && (
-                                    <div className="space-y-2">
-                                        <label className="theme-muted block text-sm" htmlFor="service-status-api-key">{t('API-Schlüssel (nur einmal sichtbar)')}</label>
-                                        <input
-                                            id="service-status-api-key"
-                                            className="theme-input w-full rounded-lg border px-3 py-2 font-mono text-sm"
-                                            value={revealedServiceStatusApiKey}
-                                            readOnly
-                                            onFocus={(event) => event.currentTarget.select()}
-                                        />
-                                        <button className="rounded-lg border px-3 py-2 text-sm theme-text disabled:opacity-50" type="button" disabled={saving} onClick={() => void copyServiceStatusApiKey()}>
-                                            {t('Schlüssel kopieren')}
-                                        </button>
-                                        <button className="ml-2 rounded-lg border px-3 py-2 text-sm theme-muted" type="button" onClick={() => setRevealedServiceStatusApiKey('')}>
-                                            {t('Ausblenden')}
-                                        </button>
-                                    </div>
-                                )}
                                 <div>
                                     <p className="theme-muted text-sm">{t('Sende alle 30 Sekunden per HTTPS einen')} <code className="font-mono">PUT /api/services/status</code> <span>{t('mit')}</span> <code className="font-mono">Authorization: Bearer &lt;SCHLÜSSEL&gt;</code>:</p>
                                     <pre className="theme-input mt-2 overflow-x-auto rounded-lg border p-3 text-xs"><code>{language === 'de'
-                                        ? '{ "name": "Minecraft", "status": "online", "details": "Server läuft" }'
-                                        : '{ "name": "Minecraft", "status": "online", "details": "Server is running" }'}</code></pre>
+                                        ? '{ "status": "online", "details": "Server läuft" }'
+                                        : '{ "status": "online", "details": "Server is running" }'}</code></pre>
                                 </div>
                             </article>
+                            <form className="theme-panel grid gap-3 rounded-2xl border p-5 sm:grid-cols-2" onSubmit={createService}>
+                                <h2 className="theme-text font-semibold sm:col-span-2">{t('Service hinzufügen')}</h2>
+                                <input
+                                    className="theme-input rounded-lg border px-3 py-2 text-sm"
+                                    value={newService.name}
+                                    onChange={(event) => setNewService((current) => ({ ...current, name: event.target.value }))}
+                                    placeholder={t('Service-Name')}
+                                    aria-label={t('Service-Name')}
+                                    maxLength={64}
+                                    required
+                                />
+                                <input
+                                    className="theme-input rounded-lg border px-3 py-2 text-sm"
+                                    value={newService.address}
+                                    onChange={(event) => setNewService((current) => ({ ...current, address: event.target.value }))}
+                                    placeholder={t('Serveradresse')}
+                                    aria-label={t('Serveradresse')}
+                                    maxLength={255}
+                                    required
+                                />
+                                <select
+                                    className="theme-input rounded-lg border px-3 py-2 text-sm"
+                                    value={newService.status}
+                                    onChange={(event) => setNewService((current) => ({ ...current, status: event.target.value as Service['status'] }))}
+                                    aria-label={t('Service-Status')}
+                                >
+                                    <option value="online">{t('Online')}</option>
+                                    <option value="offline">{t('Offline')}</option>
+                                    <option value="maintenance">{t('Wartung')}</option>
+                                </select>
+                                <input
+                                    className="theme-input rounded-lg border px-3 py-2 text-sm"
+                                    value={newService.details}
+                                    onChange={(event) => setNewService((current) => ({ ...current, details: event.target.value }))}
+                                    placeholder={t('Status-Details')}
+                                    aria-label={t('Status-Details')}
+                                    maxLength={255}
+                                />
+                                <label className="theme-muted flex items-center gap-2 text-sm sm:col-span-2">
+                                    <input
+                                        type="checkbox"
+                                        checked={newService.manualOverride}
+                                        onChange={(event) => setNewService((current) => ({ ...current, manualOverride: event.target.checked }))}
+                                    />
+                                    {t('Manueller Status-Override')}
+                                </label>
+                                <button
+                                    className="w-fit rounded-lg bg-sky-300 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50 sm:col-span-2"
+                                    type="submit"
+                                    disabled={saving}
+                                >
+                                    {t('Service hinzufügen und API-Schlüssel erstellen')}
+                                </button>
+                            </form>
                             {services.map((service) => (
                                 <article key={service.id} className="theme-panel grid gap-3 rounded-2xl border p-5 sm:grid-cols-2">
-                                    <div>
-                                        <h2 className="theme-text font-semibold">{service.name}</h2>
-                                        <p className="theme-muted mt-1 font-mono text-sm">{service.address}</p>
-                                    </div>
+                                    <input
+                                        className="theme-input rounded-lg border px-3 py-2 text-sm"
+                                        value={service.name}
+                                        onChange={(event) => setServices((items) => items.map((item) => item.id === service.id ? { ...item, name: event.target.value } : item))}
+                                        aria-label={t('Service-Name')}
+                                        maxLength={64}
+                                        required
+                                    />
+                                    <input
+                                        className="theme-input rounded-lg border px-3 py-2 text-sm"
+                                        value={service.address}
+                                        onChange={(event) => setServices((items) => items.map((item) => item.id === service.id ? { ...item, address: event.target.value } : item))}
+                                        aria-label={t('Serveradresse')}
+                                        maxLength={255}
+                                        required
+                                    />
                                     <select className="theme-input rounded-lg border px-3 py-2 text-sm" value={service.status} onChange={(event) => setServices((items) => items.map((item) => item.id === service.id ? { ...item, status: event.target.value as Service['status'] } : item))} aria-label={t('Status von {service}', { service: service.name })}>
                                         <option value="online">Online</option>
                                         <option value="offline">Offline</option>
                                         <option value="maintenance">{t('Wartung')}</option>
                                     </select>
                                     <input className="theme-input rounded-lg border px-3 py-2 text-sm sm:col-span-2" value={service.details} onChange={(event) => setServices((items) => items.map((item) => item.id === service.id ? { ...item, details: event.target.value } : item))} placeholder={t('Status-Details')} maxLength={255} aria-label={t('Details für {service}', { service: service.name })} />
-                                    <button className="w-fit rounded-lg bg-sky-300 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50 sm:col-span-2" disabled={saving} onClick={() => void saveService(service)}>{t('Status speichern')}</button>
+                                    <label className="theme-muted flex items-center gap-2 text-sm sm:col-span-2">
+                                        <input
+                                            type="checkbox"
+                                            checked={service.manualOverride}
+                                            disabled={saving}
+                                            onChange={(event) => setServices((items) => items.map((item) => item.id === service.id ? { ...item, manualOverride: event.target.checked } : item))}
+                                        />
+                                        {t('Manueller Status-Override')}
+                                    </label>
+                                    <div className="flex flex-wrap items-center gap-3 sm:col-span-2">
+                                        <span className="theme-muted text-sm">
+                                            {t('API-Schlüssel: {status}', { status: service.apiKeyConfigured ? t('Aktiv') : t('Nicht eingerichtet') })}
+                                            {service.apiKeyCreatedAt && ` · ${t('erstellt')} ${new Date(service.apiKeyCreatedAt).toLocaleString(language === 'de' ? 'de-DE' : 'en-US')}`}
+                                        </span>
+                                        <button
+                                            className="rounded-lg border px-3 py-2 text-sm theme-text disabled:opacity-50"
+                                            type="button"
+                                            disabled={saving}
+                                            onClick={() => void rotateServiceApiKey(service)}
+                                        >
+                                            {service.apiKeyConfigured ? t('Schlüssel neu erstellen') : t('Schlüssel erstellen')}
+                                        </button>
+                                        <button
+                                            className="rounded-lg bg-sky-300 px-3 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50"
+                                            type="button"
+                                            disabled={saving}
+                                            onClick={() => void saveService(service)}
+                                        >
+                                            {t('Service speichern')}
+                                        </button>
+                                        <button
+                                            className="rounded-lg border border-rose-400/20 px-3 py-2 text-sm text-rose-200 disabled:opacity-50"
+                                            type="button"
+                                            disabled={saving}
+                                            onClick={() => deleteService(service)}
+                                        >
+                                            {t('Service löschen')}
+                                        </button>
+                                    </div>
+                                    {revealedServiceApiKeys[service.id] && (
+                                        <div className="space-y-2 sm:col-span-2">
+                                            <label className="theme-muted block text-sm" htmlFor={`service-api-key-${service.id}`}>
+                                                {t('API-Schlüssel für {service} (nur einmal sichtbar)', { service: service.name })}
+                                            </label>
+                                            <input
+                                                id={`service-api-key-${service.id}`}
+                                                className="theme-input w-full rounded-lg border px-3 py-2 font-mono text-sm"
+                                                value={revealedServiceApiKeys[service.id]}
+                                                readOnly
+                                                onFocus={(event) => event.currentTarget.select()}
+                                            />
+                                            <button
+                                                className="rounded-lg border px-3 py-2 text-sm theme-text disabled:opacity-50"
+                                                type="button"
+                                                disabled={saving}
+                                                onClick={() => void copyServiceApiKey(service.id)}
+                                            >
+                                                {t('Schlüssel kopieren')}
+                                            </button>
+                                            <button
+                                                className="ml-2 rounded-lg border px-3 py-2 text-sm theme-muted"
+                                                type="button"
+                                                onClick={() => setRevealedServiceApiKeys((current) => {
+                                                    const remaining = { ...current };
+                                                    delete remaining[service.id];
+                                                    return remaining;
+                                                })}
+                                            >
+                                                {t('Ausblenden')}
+                                            </button>
+                                        </div>
+                                    )}
                                 </article>
                             ))}
                             {!services.length && <p className="theme-muted rounded-xl border p-5">{t('Keine Services konfiguriert.')}</p>}

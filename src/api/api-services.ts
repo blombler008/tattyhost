@@ -1,12 +1,21 @@
 import { Router, type Request, type Response } from 'express';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { executeTransaction, query, type SqlParameter } from '@tattyhost/SQLutils';
+import type { UpsertResult } from 'mariadb';
+import { execute, executeTransaction, query, type SqlParameter, withDatabaseTransaction } from '@tattyhost/SQLutils';
 import { logEvent } from '../logging/app-logger.ts';
 import { logOperationalEvent } from '../logging/operational-log.ts';
-import { auditStatement, logApiFailure, logAuditCommitted, requireAdmin, sendFailure, sendServerFailure, sendSuccess } from './api-shared.ts';
+import { auditStatement, isDuplicateEntry, logApiFailure, logAuditCommitted, requireAdmin, sendFailure, sendServerFailure, sendSuccess } from './api-shared.ts';
 
 const VALID_SERVICE_STATUSES = ['online', 'offline', 'maintenance'] as const;
 const SERVICE_STATUS_PUSH_INTERVAL_MS = 10_000;
+const HEARTBEAT_EXPIRED_DETAILS = 'Keine Statusmeldung seit über 60 Sekunden';
+
+function isDatabaseBoolean(value: unknown): boolean {
+    if (value === true || value === 1 || value === '1') return true;
+    if (typeof value === 'string') return value.toLowerCase() === 'true';
+    if (!Buffer.isBuffer(value)) return false;
+    return value.length === 1 ? value[0] === 1 : value.toString('utf8').toLowerCase() === 'true';
+}
 
 type PublicServiceStatus = {
     id: number;
@@ -25,7 +34,7 @@ function hashServiceStatusApiKey(apiKey: string): string {
     return createHash('sha256').update(apiKey, 'utf8').digest('hex');
 }
 
-async function authenticateServiceStatusApiKey(req: Request, res: Response): Promise<{ actorId: string | null } | null> {
+async function authenticateServiceStatusApiKey(req: Request, res: Response): Promise<{ serviceId: number; actorId: string | null } | null> {
     const authorization = req.get('authorization') || '';
     const match = /^Bearer ([A-Za-z0-9+/]{64})$/.exec(authorization);
     const apiKey = match?.[1];
@@ -38,11 +47,12 @@ async function authenticateServiceStatusApiKey(req: Request, res: Response): Pro
     }
 
     try {
-        const keys = await query<{ token_hash: string; created_by: string | null }>(
-            'SELECT token_hash, created_by FROM service_status_api_keys WHERE id = 1 LIMIT 1'
+        const keys = await query<{ service_id: number; token_hash: string; created_by: string | null }>(
+            'SELECT service_id, token_hash, created_by FROM service_status_service_api_keys WHERE token_hash = ? LIMIT 1',
+            [hashServiceStatusApiKey(apiKey)]
         );
-        const storedHash = keys[0]?.token_hash;
-        if (!storedHash || !/^[a-f0-9]{64}$/i.test(storedHash)) {
+        const key = keys[0];
+        if (!key || !/^[a-f0-9]{64}$/i.test(key.token_hash)) {
             logEvent('warn', 'api.service_status.unauthorized', {
                 requestId: typeof res.locals.requestId === 'string' ? res.locals.requestId : undefined
             });
@@ -50,7 +60,7 @@ async function authenticateServiceStatusApiKey(req: Request, res: Response): Pro
             return null;
         }
 
-        const expected = Buffer.from(storedHash, 'hex');
+        const expected = Buffer.from(key.token_hash, 'hex');
         const supplied = Buffer.from(hashServiceStatusApiKey(apiKey), 'hex');
         if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) {
             logEvent('warn', 'api.service_status.unauthorized', {
@@ -60,97 +70,11 @@ async function authenticateServiceStatusApiKey(req: Request, res: Response): Pro
             return null;
         }
 
-        return { actorId: keys[0].created_by };
+        return { serviceId: key.service_id, actorId: key.created_by };
     } catch (error) {
         logApiFailure(res, 'api.service_status.authentication_failed', error);
         sendServerFailure(res);
         return null;
-    }
-}
-
-async function getServiceStatusApiKeyAPIRoute(_req: Request, res: Response) {
-    if (!requireAdmin(res)) return;
-    try {
-        const keys = await query<{ created_at: Date }>(
-            'SELECT created_at FROM service_status_api_keys WHERE id = 1 LIMIT 1'
-        );
-        sendSuccess(res, {
-            configured: Boolean(keys[0]),
-            createdAt: keys[0]?.created_at || null
-        });
-    } catch (error) {
-        logApiFailure(res, 'api.admin.service_status_key_load_failed', error);
-        sendServerFailure(res);
-    }
-}
-
-async function rotateServiceStatusApiKeyAPIRoute(_req: Request, res: Response) {
-    const admin = requireAdmin(res);
-    if (!admin) return;
-
-    const apiKey = randomBytes(48).toString('base64');
-    try {
-        await executeTransaction([
-            {
-                sql: `INSERT INTO service_status_api_keys (id, token_hash, created_by)
-                      VALUES (1, ?, ?)
-                      ON DUPLICATE KEY UPDATE
-                        token_hash = VALUES(token_hash),
-                        created_by = VALUES(created_by),
-                        created_at = CURRENT_TIMESTAMP`,
-                params: [hashServiceStatusApiKey(apiKey), admin.userId]
-            },
-            auditStatement(
-                res,
-                admin.userId,
-                'admin.service_status_api_key.rotated',
-                { keyLength: apiKey.length, encoding: 'base64' },
-                'service_status_api_key',
-                '1'
-            )
-        ]);
-        logAuditCommitted(
-            res,
-            admin.userId,
-            'admin.service_status_api_key.rotated',
-            'service_status_api_key',
-            '1',
-            { keyLength: apiKey.length, encoding: 'base64' }
-        );
-        res.setHeader('Cache-Control', 'no-store');
-        sendSuccess(res, { apiKey });
-    } catch (error) {
-        logApiFailure(res, 'api.admin.service_status_key_rotate_failed', error);
-        sendServerFailure(res);
-    }
-}
-
-async function revokeServiceStatusApiKeyAPIRoute(_req: Request, res: Response) {
-    const admin = requireAdmin(res);
-    if (!admin) return;
-    try {
-        await executeTransaction([
-            { sql: 'DELETE FROM service_status_api_keys WHERE id = 1' },
-            auditStatement(
-                res,
-                admin.userId,
-                'admin.service_status_api_key.revoked',
-                {},
-                'service_status_api_key',
-                '1'
-            )
-        ]);
-        logAuditCommitted(
-            res,
-            admin.userId,
-            'admin.service_status_api_key.revoked',
-            'service_status_api_key',
-            '1'
-        );
-        sendSuccess(res);
-    } catch (error) {
-        logApiFailure(res, 'api.admin.service_status_key_revoke_failed', error);
-        sendServerFailure(res);
     }
 }
 
@@ -165,22 +89,22 @@ async function getServicesAPIRoute(_req: Request, res: Response) {
 }
 
 async function getPublicServiceStatuses(): Promise<PublicServiceStatus[]> {
+    await markExpiredServiceStatuses();
     return query<PublicServiceStatus>(
-            `SELECT id, name, address,
-                    CASE
-                        WHEN last_reported_at IS NOT NULL
-                         AND last_reported_at < CURRENT_TIMESTAMP - INTERVAL 60 SECOND
-                        THEN 'offline'
-                        ELSE status
-                    END AS status,
-                    CASE
-                        WHEN last_reported_at IS NOT NULL
-                         AND last_reported_at < CURRENT_TIMESTAMP - INTERVAL 60 SECOND
-                        THEN 'Keine Statusmeldung seit über 60 Sekunden'
-                        ELSE details
-                    END AS details
-             FROM service_status ORDER BY sort_order, id`
-        );
+        'SELECT id, name, address, status, details FROM service_status ORDER BY sort_order, id'
+    );
+}
+
+async function markExpiredServiceStatuses() {
+    await execute(
+        `UPDATE service_status
+         SET status = 'offline',
+             details = '${HEARTBEAT_EXPIRED_DETAILS}',
+             last_reported_at = NULL
+         WHERE manual_override = FALSE
+           AND last_reported_at IS NOT NULL
+           AND last_reported_at < CURRENT_TIMESTAMP - INTERVAL 60 SECOND`
+    );
 }
 
 function writeServiceStatusEvent(client: Response, payload: string) {
@@ -276,11 +200,9 @@ async function updateServiceStatusFromServerAPIRoute(req: Request, res: Response
     const apiKeyAuth = await authenticateServiceStatusApiKey(req, res);
     if (!apiKeyAuth) return;
 
-    const { name, status, details } = req.body || {};
-    const serviceName = typeof name === 'string' ? name.trim() : '';
+    const { status, details } = req.body || {};
     const serviceDetails = typeof details === 'string' ? details.trim() : '';
-    if (!serviceName || serviceName.length > 64 ||
-        typeof status !== 'string' || !VALID_SERVICE_STATUSES.includes(status as typeof VALID_SERVICE_STATUSES[number]) ||
+    if (typeof status !== 'string' || !VALID_SERVICE_STATUSES.includes(status as typeof VALID_SERVICE_STATUSES[number]) ||
         (details !== undefined && typeof details !== 'string') || serviceDetails.length > 255) {
         sendFailure(res, 400, 'Ungültige Serverstatus-Angaben');
         return;
@@ -291,16 +213,11 @@ async function updateServiceStatusFromServerAPIRoute(req: Request, res: Response
             id: number;
             status: string;
             details: string;
-            heartbeat_expired: number | string | boolean;
+            manual_override: unknown;
         }>(
-            `SELECT id, status, details,
-                    CASE
-                        WHEN last_reported_at IS NOT NULL
-                         AND last_reported_at < CURRENT_TIMESTAMP - INTERVAL 60 SECOND
-                        THEN 1 ELSE 0
-                    END AS heartbeat_expired
-             FROM service_status WHERE name = ? LIMIT 1`,
-            [serviceName]
+            `SELECT id, status, details, manual_override
+             FROM service_status WHERE id = ? LIMIT 1`,
+            [apiKeyAuth.serviceId]
         );
         const service = services[0];
         if (!service) {
@@ -308,10 +225,16 @@ async function updateServiceStatusFromServerAPIRoute(req: Request, res: Response
             return;
         }
 
-        const detailsToSave = details === undefined ? service.details : serviceDetails;
-        const wasHeartbeatExpired = Number(service.heartbeat_expired) === 1;
-        const statusChanged = service.status !== status || (wasHeartbeatExpired && status !== 'offline');
-        const detailsChanged = details !== undefined && service.details !== detailsToSave;
+        if (isDatabaseBoolean(service.manual_override)) {
+            sendSuccess(res, { updated: true });
+            return;
+        }
+
+        const detailsToSave = details === undefined
+            ? service.details === HEARTBEAT_EXPIRED_DETAILS ? '' : service.details
+            : serviceDetails;
+        const statusChanged = service.status !== status;
+        const detailsChanged = service.details !== detailsToSave;
         const statements: Array<{ sql: string; params: SqlParameter[] }> = [{
             sql: `UPDATE service_status
                   SET status = ?, details = ?, updated_by = ?, last_reported_at = CURRENT_TIMESTAMP
@@ -349,34 +272,262 @@ async function updateServiceStatusFromServerAPIRoute(req: Request, res: Response
 
 async function getAdminServicesAPIRoute(_req: Request, res: Response) {
     if (!requireAdmin(res)) return;
-    getServicesAPIRoute(_req, res);
+
+    try {
+        await markExpiredServiceStatuses();
+        const services = await query<{
+            id: number;
+            name: string;
+            address: string;
+            status: PublicServiceStatus['status'];
+            details: string;
+            manual_override: unknown;
+            api_key_configured: unknown;
+            api_key_created_at: Date | null;
+        }>(`
+            SELECT s.id, s.name, s.address, s.status, s.details, s.manual_override,
+                   k.service_id IS NOT NULL AS api_key_configured,
+                   k.created_at AS api_key_created_at
+            FROM service_status s
+            LEFT JOIN service_status_service_api_keys k ON k.service_id = s.id
+            ORDER BY s.sort_order, s.id
+        `);
+        sendSuccess(res, {
+            services: services.map((service) => ({
+                id: service.id,
+                name: service.name,
+                address: service.address,
+                status: service.status,
+                details: service.details,
+                manualOverride: isDatabaseBoolean(service.manual_override),
+                apiKeyConfigured: isDatabaseBoolean(service.api_key_configured),
+                apiKeyCreatedAt: service.api_key_created_at
+            }))
+        });
+    } catch (error) {
+        logApiFailure(res, 'api.admin.services_load_failed', error);
+        sendServerFailure(res);
+    }
 }
 
-async function updateServiceStatusAPIRoute(req: Request, res: Response) {
+async function createServiceAPIRoute(req: Request, res: Response) {
     const admin = requireAdmin(res);
     if (!admin) return;
-    const serviceId = Number(req.params.id);
-    const { status, details } = req.body || {};
-    if (!Number.isInteger(serviceId) || serviceId <= 0 ||
+
+    const { name, address, status, details, manualOverride } = req.body || {};
+    const serviceName = typeof name === 'string' ? name.trim() : '';
+    const serviceAddress = typeof address === 'string' ? address.trim() : '';
+    const serviceDetails = typeof details === 'string' ? details.trim() : '';
+    if (!serviceName || serviceName.length > 64 ||
+        !serviceAddress || serviceAddress.length > 255 ||
         typeof status !== 'string' || !VALID_SERVICE_STATUSES.includes(status as typeof VALID_SERVICE_STATUSES[number]) ||
-        typeof details !== 'string' || details.length > 255) {
-        sendFailure(res, 400, 'Ungültige Serverstatus-Angaben');
+        (details !== undefined && typeof details !== 'string') || serviceDetails.length > 255 ||
+        (manualOverride !== undefined && typeof manualOverride !== 'boolean')) {
+        sendFailure(res, 400, 'Ungültige Service-Angaben');
+        return;
+    }
+
+    const apiKey = randomBytes(48).toString('base64');
+    try {
+        const serviceId = await withDatabaseTransaction(
+            ['SELECT', 'INSERT', 'INSERT', 'INSERT'],
+            async (connection) => {
+                const sortRows = await connection.query<Array<{ next_sort_order: number | string }>>(
+                    'SELECT COALESCE(MAX(sort_order), 0) + 1 AS next_sort_order FROM service_status'
+                );
+                const sortOrder = Number(sortRows[0]?.next_sort_order || 1);
+                const inserted = await connection.query<UpsertResult>(
+                    `INSERT INTO service_status
+                        (name, address, status, details, sort_order, updated_by, manual_override)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                    [serviceName, serviceAddress, status, serviceDetails, sortOrder, admin.userId, manualOverride ?? false]
+                );
+                const id = Number(inserted.insertId);
+                if (!Number.isSafeInteger(id) || id <= 0) throw new Error('Service ID was not returned after insert');
+
+                await connection.query(
+                    `INSERT INTO service_status_service_api_keys (service_id, token_hash, created_by)
+                     VALUES (?, ?, ?)`,
+                    [id, hashServiceStatusApiKey(apiKey), admin.userId]
+                );
+                const audit = auditStatement(
+                    res,
+                    admin.userId,
+                    'admin.service.created',
+                    { name: serviceName, address: serviceAddress, status },
+                    'service',
+                    String(id)
+                );
+                await connection.query(audit.sql, audit.params);
+                return id;
+            }
+        );
+
+        logAuditCommitted(res, admin.userId, 'admin.service.created', 'service', String(serviceId), {
+            name: serviceName,
+            address: serviceAddress,
+            status
+        });
+        res.setHeader('Cache-Control', 'no-store');
+        sendSuccess(res, { serviceId, apiKey });
+    } catch (error) {
+        if (isDuplicateEntry(error)) {
+            sendFailure(res, 409, 'Ein Service mit diesem Namen existiert bereits');
+            return;
+        }
+        logApiFailure(res, 'api.admin.service_create_failed', error);
+        sendServerFailure(res);
+    }
+}
+
+async function rotateServiceApiKeyAPIRoute(req: Request, res: Response) {
+    const admin = requireAdmin(res);
+    if (!admin) return;
+
+    const serviceId = Number(req.params.id);
+    if (!Number.isSafeInteger(serviceId) || serviceId <= 0) {
+        sendFailure(res, 400, 'Ungültige Service-ID');
+        return;
+    }
+
+    const apiKey = randomBytes(48).toString('base64');
+    try {
+        const exists = await query<{ id: number }>(
+            'SELECT id FROM service_status WHERE id = ? LIMIT 1',
+            [serviceId]
+        );
+        if (!exists[0]) {
+            sendFailure(res, 404, 'Service nicht gefunden');
+            return;
+        }
+
+        await executeTransaction([
+            {
+                sql: `INSERT INTO service_status_service_api_keys (service_id, token_hash, created_by)
+                      VALUES (?, ?, ?)
+                      ON DUPLICATE KEY UPDATE
+                        token_hash = VALUES(token_hash),
+                        created_by = VALUES(created_by),
+                        created_at = CURRENT_TIMESTAMP`,
+                params: [serviceId, hashServiceStatusApiKey(apiKey), admin.userId]
+            },
+            auditStatement(
+                res,
+                admin.userId,
+                'admin.service.api_key.rotated',
+                { keyLength: apiKey.length, encoding: 'base64' },
+                'service',
+                String(serviceId)
+            )
+        ]);
+        logAuditCommitted(
+            res,
+            admin.userId,
+            'admin.service.api_key.rotated',
+            'service',
+            String(serviceId),
+            { keyLength: apiKey.length, encoding: 'base64' }
+        );
+        res.setHeader('Cache-Control', 'no-store');
+        sendSuccess(res, { apiKey });
+    } catch (error) {
+        logApiFailure(res, 'api.admin.service_api_key_rotate_failed', error);
+        sendServerFailure(res);
+    }
+}
+
+async function updateServiceAPIRoute(req: Request, res: Response) {
+    const admin = requireAdmin(res);
+    if (!admin) return;
+
+    const serviceId = Number(req.params.id);
+    const { name, address, status, details, manualOverride } = req.body || {};
+    const serviceName = typeof name === 'string' ? name.trim() : '';
+    const serviceAddress = typeof address === 'string' ? address.trim() : '';
+    const serviceDetails = typeof details === 'string' ? details.trim() : '';
+    if (!Number.isSafeInteger(serviceId) || serviceId <= 0 ||
+        !serviceName || serviceName.length > 64 ||
+        !serviceAddress || serviceAddress.length > 255 ||
+        typeof status !== 'string' || !VALID_SERVICE_STATUSES.includes(status as typeof VALID_SERVICE_STATUSES[number]) ||
+        typeof details !== 'string' || serviceDetails.length > 255 ||
+        typeof manualOverride !== 'boolean') {
+        sendFailure(res, 400, 'Ungültige Service-Angaben');
         return;
     }
 
     try {
+        const services = await query<{ id: number }>(
+            'SELECT id FROM service_status WHERE id = ? LIMIT 1',
+            [serviceId]
+        );
+        if (!services[0]) {
+            sendFailure(res, 404, 'Service nicht gefunden');
+            return;
+        }
+
         await executeTransaction([
             {
-                sql: 'UPDATE service_status SET status = ?, details = ?, updated_by = ? WHERE id = ?',
-                params: [status, details.trim(), admin.userId, serviceId]
+                sql: `UPDATE service_status
+                      SET name = ?, address = ?, status = ?, details = ?, updated_by = ?,
+                          manual_override = ?, last_reported_at = NULL
+                      WHERE id = ?`,
+                params: [serviceName, serviceAddress, status, serviceDetails, admin.userId, manualOverride, serviceId]
             },
-            auditStatement(res, admin.userId, 'admin.service.status_changed', { status }, 'service', String(serviceId))
+            auditStatement(
+                res,
+                admin.userId,
+                'admin.service.updated',
+                { name: serviceName, address: serviceAddress, status },
+                'service',
+                String(serviceId)
+            )
         ]);
         void refreshServiceStatusPush();
-        logAuditCommitted(res, admin.userId, 'admin.service.status_changed', 'service', String(serviceId), { status });
+        logAuditCommitted(res, admin.userId, 'admin.service.updated', 'service', String(serviceId), {
+            name: serviceName,
+            address: serviceAddress,
+            status
+        });
         sendSuccess(res);
     } catch (error) {
+        if (isDuplicateEntry(error)) {
+            sendFailure(res, 409, 'Ein Service mit diesem Namen existiert bereits');
+            return;
+        }
         logApiFailure(res, 'api.admin.service_update_failed', error);
+        sendServerFailure(res);
+    }
+}
+
+async function deleteServiceAPIRoute(req: Request, res: Response) {
+    const admin = requireAdmin(res);
+    if (!admin) return;
+
+    const serviceId = Number(req.params.id);
+    if (!Number.isSafeInteger(serviceId) || serviceId <= 0) {
+        sendFailure(res, 400, 'Ungültige Service-ID');
+        return;
+    }
+
+    try {
+        const services = await query<{ id: number }>(
+            'SELECT id FROM service_status WHERE id = ? LIMIT 1',
+            [serviceId]
+        );
+        if (!services[0]) {
+            sendFailure(res, 404, 'Service nicht gefunden');
+            return;
+        }
+
+        await executeTransaction([
+            { sql: 'DELETE FROM service_status WHERE id = ?', params: [serviceId] },
+            auditStatement(res, admin.userId, 'admin.service.deleted', {}, 'service', String(serviceId))
+        ]);
+        void refreshServiceStatusPush();
+        logAuditCommitted(res, admin.userId, 'admin.service.deleted', 'service', String(serviceId));
+        sendSuccess(res);
+    } catch (error) {
+        logApiFailure(res, 'api.admin.service_delete_failed', error);
         sendServerFailure(res);
     }
 }
@@ -394,9 +545,9 @@ export function createServicesRouter(): Router {
 export function createAdminServicesRouter(): Router {
     const router = Router();
     router.get('/', getAdminServicesAPIRoute);
-    router.get('/status-key', getServiceStatusApiKeyAPIRoute);
-    router.post('/status-key', rotateServiceStatusApiKeyAPIRoute);
-    router.delete('/status-key', revokeServiceStatusApiKeyAPIRoute);
-    router.put('/:id', updateServiceStatusAPIRoute);
+    router.post('/', createServiceAPIRoute);
+    router.post('/:id/api-key', rotateServiceApiKeyAPIRoute);
+    router.put('/:id', updateServiceAPIRoute);
+    router.delete('/:id', deleteServiceAPIRoute);
     return router;
 }

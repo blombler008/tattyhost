@@ -264,6 +264,7 @@ export async function setupServiceStatusTable() {
         );
     `);
     await execute('ALTER TABLE service_status ADD COLUMN IF NOT EXISTS last_reported_at TIMESTAMP NULL');
+    await execute('ALTER TABLE service_status ADD COLUMN IF NOT EXISTS manual_override BOOLEAN NOT NULL DEFAULT FALSE');
     await execute(`
         INSERT IGNORE INTO service_status (name, address, status, details, sort_order)
         VALUES
@@ -272,14 +273,16 @@ export async function setupServiceStatusTable() {
     `);
 }
 
-export async function setupServiceStatusApiKeysTable() {
+export async function setupServiceStatusServiceApiKeysTable() {
     await execute(`
-        CREATE TABLE IF NOT EXISTS service_status_api_keys (
-            id TINYINT UNSIGNED PRIMARY KEY,
+        CREATE TABLE IF NOT EXISTS service_status_service_api_keys (
+            service_id INT PRIMARY KEY,
             token_hash CHAR(64) NOT NULL,
             created_by CHAR(36),
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (created_by) REFERENCES users(uuid) ON DELETE SET NULL
+            FOREIGN KEY (service_id) REFERENCES service_status(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(uuid) ON DELETE SET NULL,
+            UNIQUE KEY uq_service_status_service_api_keys_token_hash (token_hash)
         );
     `);
 }
@@ -302,5 +305,5 @@ export async function setupAllTables() {
     await setupDownloadUploadSettingsTable();
     await setupFileListingSettingsTable();
     await setupServiceStatusTable();
-    await setupServiceStatusApiKeysTable();
+    await setupServiceStatusServiceApiKeysTable();
 }
