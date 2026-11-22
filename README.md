@@ -20,6 +20,22 @@ detach with Ctrl+A, then D. The script refuses to create a duplicate session.
 Do not run `npm ci --omit=dev`, since the production build and TypeScript server
 runner are development dependencies.
 
+## Production update
+
+Run this on the Linux server from the project checkout:
+
+```bash
+chmod +x update.sh
+./update.sh
+```
+
+`update.sh` fetches and fast-forwards the current branch's configured upstream,
+installs dependencies, builds the project, and restarts the `tattyhost` Screen
+session. It refuses to run with tracked local changes, a tracked `.env`, or an
+upstream that contains `.env`. The local ignored `.env` is left untouched.
+If the fetch, dependency installation, or build fails, the running Screen
+session is not stopped.
+
 ## Application logging
 
 The server writes colored, human-readable messages to the console and structured
