@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import downloadIcon from '../assets/material-icons/download-button.svg';
 import { useI18n } from '../i18n-context';
 import { useToast } from '../toast-context';
 
@@ -57,11 +58,12 @@ export default function DownloadsPage() {
                             <h2 className="theme-text text-lg font-semibold">{t(download.title)}</h2>
                             {download.description && <p className="theme-muted mt-2 text-sm leading-6">{t(download.description)}</p>}
                             <a
-                                className="mt-5 inline-flex rounded-lg bg-sky-300 px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-sky-200"
+                                className="mt-5 inline-flex items-center gap-2 rounded-lg bg-sky-300 px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-sky-200"
                                 href={download.url}
                                 target="_blank"
                                 rel="noreferrer"
                             >
+                                <img className="h-4 w-4 brightness-0" src={downloadIcon} alt="" />
                                 {t('Herunterladen')}
                             </a>
                         </li>

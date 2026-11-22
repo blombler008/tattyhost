@@ -129,6 +129,10 @@ body {
   color: var(--theme-text);
 }
 
-html[data-theme="light"] .profile-settings-icon {
+.material-icon {
+  filter: brightness(0) invert(1);
+}
+
+html[data-theme="light"] .material-icon {
   filter: brightness(0.15);
 }

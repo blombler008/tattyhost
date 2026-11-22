@@ -1,4 +1,9 @@
 import { useEffect, useState } from 'react';
+import homeIcon from '../assets/material-icons/home-button.svg';
+import upIcon from '../assets/material-icons/up-arrow-key.svg';
+import folderIcon from '../assets/material-icons/folder-symbol.svg';
+import fileIcon from '../assets/material-icons/google-drive-file.svg';
+import favoriteIcon from '../assets/material-icons/mark-as-favorite-star.svg';
 import { useI18n } from '../i18n-context';
 import { useToast } from '../toast-context';
 
@@ -43,7 +48,7 @@ export default function FilesPage() {
                 }
                 if (!cancelled) {
                     setCurrentPath(data.currentPath || '');
-                    setParentPath(data.parentPath || null);
+                    setParentPath(data.parentPath ?? null);
                     setContents(data.contents);
                 }
             } catch (loadError) {
@@ -75,23 +80,32 @@ export default function FilesPage() {
                 <p className="theme-muted mt-8" role="status">{t('Dateien werden geladen...')}</p>
             ) : (
                 <div className="mt-8 space-y-3">
-                    {parentPath !== null && (
-                        <a className="theme-panel flex items-center gap-3 rounded-xl border p-4 transition hover:border-sky-300/30" href={pathHref(parentPath)}>
-                            <span aria-hidden="true" className="text-sky-200">↰</span>
-                            <span className="theme-text">{t('Ein Verzeichnis nach oben')}</span>
+                    <div className="flex flex-col gap-3 sm:flex-row">
+                        {parentPath !== null && (
+                            <a className="theme-panel flex flex-1 items-center gap-3 rounded-xl border p-4 transition hover:border-sky-300/30" href={pathHref(parentPath)}>
+                                <img aria-hidden="true" className="material-icon h-5 w-5 shrink-0" src={upIcon} alt="" />
+                                <span className="theme-text">{t('Ein Verzeichnis nach oben')}</span>
+                            </a>
+                        )}
+                        <a className="theme-panel flex flex-1 items-center gap-3 rounded-xl border p-4 transition hover:border-sky-300/30" href={pathHref('')}>
+                            <img aria-hidden="true" className="material-icon h-5 w-5 shrink-0" src={homeIcon} alt="" />
+                            <span className="theme-text">{t('Home')}</span>
                         </a>
-                    )}
+                    </div>
                     {contents.map((entry) => (
                         <a
                             key={entry.path}
                             className="theme-panel flex min-w-0 items-center gap-3 rounded-xl border p-4 transition hover:border-sky-300/30"
                             href={entry.isDirectory ? pathHref(entry.path) : `/api/files/download?path=${encodeURIComponent(entry.path)}`}
                         >
-                            <span aria-hidden="true" className="w-5 shrink-0 text-center text-sky-200">
-                                {entry.isDirectory ? '▸' : '·'}
-                            </span>
+                            <img
+                                aria-hidden="true"
+                                className="material-icon h-5 w-5 shrink-0"
+                                src={entry.isDirectory ? folderIcon : fileIcon}
+                                alt=""
+                            />
                             <span className="theme-text min-w-0 flex-1 break-all">{entry.name}</span>
-                            {entry.isStarred && <span className="text-amber-300" aria-label={t('Favorit')}>★</span>}
+                            {entry.isStarred && <img className="material-icon h-4 w-4 shrink-0" src={favoriteIcon} alt={t('Favorit')} />}
                             {entry.isDirectory && <span className="theme-muted text-xs">{t('Ordner')}</span>}
                         </a>
                     ))}

@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import arr from '../assets/arrow-forward.svg';
+import closeIcon from '../assets/material-icons/close-button.svg';
 import { useI18n } from '../i18n-context';
 export type NotificationType = 'success' | 'error' | 'info';
 
@@ -46,7 +46,7 @@ function ToastItem({ notification, onRemove, duration }: {
                 className="shrink-0 rounded p-1 text-white/80 hover:bg-white/10 hover:text-white"
                 aria-label={t('Schließen')}
             >
-                <img src={arr} alt="" className="h-4 w-4 cursor-pointer" />
+                <img src={closeIcon} alt="" className="material-icon h-4 w-4 cursor-pointer" />
             </button>
         </div>
     );

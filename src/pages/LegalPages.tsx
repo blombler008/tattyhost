@@ -1,4 +1,5 @@
 import type { SSRAuthState } from '../middleware/check-auth';
+import externalLinkIcon from '../assets/material-icons/new-tab.svg';
 import { useI18n } from '../i18n-context';
 
 export function LicensePage() {
@@ -122,7 +123,7 @@ export function SitemapPage({ auth }: SitemapPageProps) {
                     <li key={link.href}>
                         <a className="theme-panel flex items-center justify-between rounded-xl border p-4 transition hover:border-sky-300/30" href={link.href}>
                             <span className="theme-text">{link.label}</span>
-                            <span aria-hidden="true" className="text-sky-200">↗</span>
+                            <img aria-hidden="true" className="material-icon h-4 w-4 shrink-0" src={externalLinkIcon} alt="" />
                         </a>
                     </li>
                 ))}

@@ -1,3 +1,4 @@
+import serverIcon from '../assets/material-icons/web-server.svg';
 import { useServiceStatus, type Service } from '../hooks/use-service-status';
 import { useI18n } from '../i18n-context';
 
@@ -48,8 +49,8 @@ export default function HomePage() {
                                 <p className="text-sm theme-muted">{t('Dein nächstes Abenteuer')}</p>
                                 <h2 className="mt-1 text-2xl font-semibold text-white">{t('Tattyhost Netzwerk')}</h2>
                             </div>
-                            <span aria-hidden="true" className="grid h-11 w-11 place-items-center rounded-2xl bg-sky-300/10 text-xl text-sky-200">
-                                ✦
+                            <span aria-hidden="true" className="grid h-11 w-11 place-items-center rounded-2xl bg-sky-300/10">
+                                <img className="material-icon h-6 w-6" src={serverIcon} alt="" />
                             </span>
                         </div>
                         <div className="space-y-3">

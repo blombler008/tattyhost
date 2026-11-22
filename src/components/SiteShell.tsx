@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react';
-import logo from '../assets/logo3.svg';
-import settingsIcon from '../assets/settings.svg';
+import logo from '../assets/logos/logo3.svg';
+import settingsIcon from '../assets/material-icons/settings-cogwheel-button.svg';
+import sunIcon from '../assets/material-icons/shining-sun.svg';
+import themeIcon from '../assets/material-icons/invert-colors-button.svg';
+import menuIcon from '../assets/material-icons/menu-button.svg';
+import closeIcon from '../assets/material-icons/close-button.svg';
 import { useI18n } from '../i18n-context';
 import { queueToastForNextPage, useToast } from '../toast-context';
 
@@ -176,7 +180,7 @@ export default function SiteShell({ children, activePage, auth }: SiteShellProps
                                     aria-label={t(darkMode ? 'Zum Hellmodus wechseln' : 'Zum Dunkelmodus wechseln')}
                                     title={t(darkMode ? 'Hell' : 'Dunkel')}
                                 >
-                                    <span aria-hidden="true">{darkMode ? '☀' : '☾'}</span>
+                                    <img className="material-icon h-5 w-5" src={darkMode ? sunIcon : themeIcon} alt="" />
                                 </button>
                             </>
                         )}
@@ -218,7 +222,7 @@ export default function SiteShell({ children, activePage, auth }: SiteShellProps
                                     aria-expanded={profileOpen}
                                     onClick={() => setProfileOpen((open) => !open)}
                                 >
-                                    <img className="profile-settings-icon h-5 w-5" src={settingsIcon} alt="" />
+                                    <img className="material-icon h-5 w-5" src={settingsIcon} alt="" />
                                     <span>{t('Profil')}</span>
                                 </button>
                                 {profileOpen && (
@@ -276,7 +280,7 @@ export default function SiteShell({ children, activePage, auth }: SiteShellProps
                             aria-expanded={menuOpen}
                             onClick={() => setMenuOpen((open) => !open)}
                         >
-                            <span aria-hidden="true">{menuOpen ? '×' : '☰'}</span>
+                            <img className="material-icon h-5 w-5" src={menuOpen ? closeIcon : menuIcon} alt="" />
                         </button>
                     </div>
                 </div>
