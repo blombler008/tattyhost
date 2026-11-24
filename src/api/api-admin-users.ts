@@ -4,9 +4,10 @@ import { execute, executeTransaction, query, type SqlParameter } from '@tattyhos
 import { isSmtpConfigured, sendPasswordResetEmail } from '../email/password-reset-mailer.ts';
 import { logEvent } from '../logging/app-logger.ts';
 import { auditStatement, logApiFailure, logAuditCommitted, requireAdmin, sendFailure, sendServerFailure, sendSuccess } from './api-shared.ts';
+import { createAdminMinecraftRouter } from './api-account-minecraft.ts';
 import { getPasswordResetUrl, isValidEmail } from './api-validators.ts';
 
-const VALID_ROLES = ['user', 'admin'] as const;
+const VALID_ROLES = ['user', 'supporter', 'moderator', 'admin'] as const;
 
 async function getAdminOverviewAPIRoute(_req: Request, res: Response) {
     if (!requireAdmin(res)) return;
@@ -47,6 +48,7 @@ async function getAdminUsersAPIRoute(req: Request, res: Response) {
             is_active: boolean | number;
             has_cloud_access: boolean | number | string;
             has_file_access: boolean | number | string;
+            has_whitelist: boolean | number | string;
             role: string | null;
             created_at: Date;
         }>(`
@@ -54,7 +56,9 @@ async function getAdminUsersAPIRoute(req: Request, res: Response) {
                    (SELECT r.name FROM user_roles ur
                     JOIN roles r ON r.id = ur.role_id
                     WHERE ur.user_uuid = u.uuid
-                    ORDER BY r.id LIMIT 1) AS role
+                    ORDER BY r.id LIMIT 1) AS role,
+                    EXISTS (SELECT 1 FROM service_whitelist_requests w
+                           WHERE w.requested_by = u.uuid AND w.status = 'approved') AS has_whitelist
             FROM users u
             WHERE (? = '' OR u.username LIKE CONCAT('%', ?, '%') OR u.email LIKE CONCAT('%', ?, '%'))
             ORDER BY u.created_at DESC
@@ -70,6 +74,7 @@ async function getAdminUsersAPIRoute(req: Request, res: Response) {
                 has_file_access: user.has_file_access === true ||
                     user.has_file_access === 1 ||
                     user.has_file_access === '1',
+                has_whitelist: Number(user.has_whitelist) === 1,
                 role: user.role || 'user'
             }))
         });
@@ -361,6 +366,7 @@ export function createAdminUsersRouter(): Router {
     usersRouter.patch('/:uuid/file-access', updateUserFileAccessAPIRoute);
     usersRouter.delete('/:uuid', deleteUserAPIRoute);
     usersRouter.post('/:uuid/password-reset', requestAdminPasswordResetAPIRoute);
+    usersRouter.use('/:uuid/minecraft', createAdminMinecraftRouter());
     router.use('/users', usersRouter);
     return router;
 }

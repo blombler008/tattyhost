@@ -8,6 +8,10 @@ export type Service = {
     address: string;
     status: 'online' | 'offline' | 'maintenance';
     details: string;
+    playersOnline: number | null;
+    playersMax: number | null;
+    minecraftVersion: string | null;
+    whitelistRequired: boolean;
 };
 
 export function useServiceStatus() {

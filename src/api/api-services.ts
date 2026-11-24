@@ -1,14 +1,22 @@
 import { Router, type Request, type Response } from 'express';
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import type { UpsertResult } from 'mariadb';
-import { execute, executeTransaction, query, type SqlParameter, withDatabaseTransaction } from '@tattyhost/SQLutils';
+import { execute, executeTransaction, query, withDatabaseTransaction } from '@tattyhost/SQLutils';
 import { logEvent } from '../logging/app-logger.ts';
 import { logOperationalEvent } from '../logging/operational-log.ts';
 import { auditStatement, isDuplicateEntry, logApiFailure, logAuditCommitted, requireAdmin, sendFailure, sendServerFailure, sendSuccess } from './api-shared.ts';
+import {
+    applyServiceHeartbeat,
+    HEARTBEAT_EXPIRED_DETAILS,
+    hashServiceStatusApiKey,
+    parseServiceStatusReport,
+    resolveServiceApiKeyRecord,
+    SERVICE_STATUS_HEARTBEAT_TIMEOUT_SECONDS,
+    VALID_SERVICE_STATUSES
+} from './service-status-contract.ts';
+import { parseServiceApiBearer } from './whitelist-contract.ts';
 
-const VALID_SERVICE_STATUSES = ['online', 'offline', 'maintenance'] as const;
 const SERVICE_STATUS_PUSH_INTERVAL_MS = 10_000;
-const HEARTBEAT_EXPIRED_DETAILS = 'Keine Statusmeldung seit über 60 Sekunden';
 
 function isDatabaseBoolean(value: unknown): boolean {
     if (value === true || value === 1 || value === '1') return true;
@@ -23,6 +31,10 @@ type PublicServiceStatus = {
     address: string;
     status: 'online' | 'offline' | 'maintenance';
     details: string;
+    playersOnline: number | null;
+    playersMax: number | null;
+    minecraftVersion: string | null;
+    whitelistRequired: boolean;
 };
 
 const serviceStatusClients = new Set<Response>();
@@ -30,15 +42,10 @@ let serviceStatusPushTimer: NodeJS.Timeout | undefined;
 let lastPushedServiceStatus = '';
 let serviceStatusPushErrorLogged = false;
 
-function hashServiceStatusApiKey(apiKey: string): string {
-    return createHash('sha256').update(apiKey, 'utf8').digest('hex');
-}
-
-async function authenticateServiceStatusApiKey(req: Request, res: Response): Promise<{ serviceId: number; actorId: string | null } | null> {
+export async function authenticateServiceApiKey(req: Request, res: Response): Promise<{ serviceId: number; actorId: string | null } | null> {
     const authorization = req.get('authorization') || '';
-    const match = /^Bearer ([A-Za-z0-9+/]{64})$/.exec(authorization);
-    const apiKey = match?.[1];
-    if (!apiKey || Buffer.from(apiKey, 'base64').toString('base64') !== apiKey) {
+    const apiKey = parseServiceApiBearer(authorization);
+    if (!apiKey) {
         logEvent('warn', 'api.service_status.unauthorized', {
             requestId: typeof res.locals.requestId === 'string' ? res.locals.requestId : undefined
         });
@@ -52,7 +59,12 @@ async function authenticateServiceStatusApiKey(req: Request, res: Response): Pro
             [hashServiceStatusApiKey(apiKey)]
         );
         const key = keys[0];
-        if (!key || !/^[a-f0-9]{64}$/i.test(key.token_hash)) {
+        const serviceAuth = resolveServiceApiKeyRecord(apiKey, key && {
+            serviceId: key.service_id,
+            actorId: key.created_by,
+            tokenHash: key.token_hash
+        });
+        if (!serviceAuth) {
             logEvent('warn', 'api.service_status.unauthorized', {
                 requestId: typeof res.locals.requestId === 'string' ? res.locals.requestId : undefined
             });
@@ -60,17 +72,7 @@ async function authenticateServiceStatusApiKey(req: Request, res: Response): Pro
             return null;
         }
 
-        const expected = Buffer.from(key.token_hash, 'hex');
-        const supplied = Buffer.from(hashServiceStatusApiKey(apiKey), 'hex');
-        if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) {
-            logEvent('warn', 'api.service_status.unauthorized', {
-                requestId: typeof res.locals.requestId === 'string' ? res.locals.requestId : undefined
-            });
-            sendFailure(res, 401, 'Ungültiger API-Schlüssel');
-            return null;
-        }
-
-        return { serviceId: key.service_id, actorId: key.created_by };
+        return serviceAuth;
     } catch (error) {
         logApiFailure(res, 'api.service_status.authentication_failed', error);
         sendServerFailure(res);
@@ -90,9 +92,17 @@ async function getServicesAPIRoute(_req: Request, res: Response) {
 
 async function getPublicServiceStatuses(): Promise<PublicServiceStatus[]> {
     await markExpiredServiceStatuses();
-    return query<PublicServiceStatus>(
-        'SELECT id, name, address, status, details FROM service_status ORDER BY sort_order, id'
+    const services = await query<Omit<PublicServiceStatus, 'whitelistRequired'> & { whitelistRequired: unknown }>(
+        `SELECT id, name, address, status, details,
+                players_online AS playersOnline, players_max AS playersMax,
+                minecraft_version AS minecraftVersion,
+                whitelist_required AS whitelistRequired
+         FROM service_status ORDER BY sort_order, id`
     );
+    return services.map((service) => ({
+        ...service,
+        whitelistRequired: isDatabaseBoolean(service.whitelistRequired)
+    }));
 }
 
 async function markExpiredServiceStatuses() {
@@ -100,10 +110,13 @@ async function markExpiredServiceStatuses() {
         `UPDATE service_status
          SET status = 'offline',
              details = '${HEARTBEAT_EXPIRED_DETAILS}',
+             players_online = NULL,
+             players_max = NULL,
+             minecraft_version = NULL,
              last_reported_at = NULL
          WHERE manual_override = FALSE
            AND last_reported_at IS NOT NULL
-           AND last_reported_at < CURRENT_TIMESTAMP - INTERVAL 60 SECOND`
+           AND last_reported_at < CURRENT_TIMESTAMP - INTERVAL ${SERVICE_STATUS_HEARTBEAT_TIMEOUT_SECONDS} SECOND`
     );
 }
 
@@ -197,70 +210,122 @@ async function serviceStatusEventsAPIRoute(_req: Request, res: Response) {
 }
 
 async function updateServiceStatusFromServerAPIRoute(req: Request, res: Response) {
-    const apiKeyAuth = await authenticateServiceStatusApiKey(req, res);
+    const apiKeyAuth = await authenticateServiceApiKey(req, res);
     if (!apiKeyAuth) return;
 
-    const { status, details } = req.body || {};
-    const serviceDetails = typeof details === 'string' ? details.trim() : '';
-    if (typeof status !== 'string' || !VALID_SERVICE_STATUSES.includes(status as typeof VALID_SERVICE_STATUSES[number]) ||
-        (details !== undefined && typeof details !== 'string') || serviceDetails.length > 255) {
+    const report = parseServiceStatusReport(req.body);
+    if (!report) {
         sendFailure(res, 400, 'Ungültige Serverstatus-Angaben');
         return;
     }
 
     try {
-        const services = await query<{
-            id: number;
-            status: string;
-            details: string;
-            manual_override: unknown;
-        }>(
-            `SELECT id, status, details, manual_override
-             FROM service_status WHERE id = ? LIMIT 1`,
-            [apiKeyAuth.serviceId]
+        const outcome = await withDatabaseTransaction(
+            ['SELECT', 'UPDATE', 'INSERT'],
+            async (connection) => {
+                const services = await connection.query<Array<{
+                    id: number;
+                    status: string;
+                    details: string;
+                    players_online: number | null;
+                    players_max: number | null;
+                    minecraft_version: string | null;
+                    manual_override: unknown;
+                }>>(
+                    `SELECT id, status, details, players_online, players_max,
+                            minecraft_version, manual_override
+                     FROM service_status WHERE id = ? FOR UPDATE`,
+                    [apiKeyAuth.serviceId]
+                );
+                const service = services[0];
+                if (!service) return { result: 'missing' as const };
+
+                const manualOverride = isDatabaseBoolean(service.manual_override);
+                const heartbeat = applyServiceHeartbeat(
+                    {
+                        status: service.status,
+                        details: service.details,
+                        playersOnline: service.players_online,
+                        playersMax: service.players_max,
+                        minecraftVersion: service.minecraft_version
+                    },
+                    report,
+                    manualOverride,
+                    new Date()
+                );
+                if (manualOverride) {
+                    await connection.query(
+                        'UPDATE service_status SET last_reported_at = CURRENT_TIMESTAMP WHERE id = ?',
+                        [service.id]
+                    );
+                    return {
+                        result: 'updated' as const,
+                        statusChanged: false,
+                        detailsChanged: false,
+                        metricsChanged: false
+                    };
+                }
+
+                await connection.query(
+                    `UPDATE service_status
+                     SET status = ?, details = ?, players_online = ?, players_max = ?,
+                         minecraft_version = ?, updated_by = ?, last_reported_at = CURRENT_TIMESTAMP
+                     WHERE id = ?`,
+                    [
+                        heartbeat.status,
+                        heartbeat.details,
+                        heartbeat.playersOnline,
+                        heartbeat.playersMax,
+                        heartbeat.minecraftVersion,
+                        apiKeyAuth.actorId,
+                        service.id
+                    ]
+                );
+                if (heartbeat.statusChanged || heartbeat.detailsChanged ||
+                    heartbeat.playersChanged || heartbeat.minecraftVersionChanged) {
+                    const audit = auditStatement(
+                        res,
+                        apiKeyAuth.actorId,
+                        'service_status.reported',
+                        {
+                            status: report.status,
+                            players: report.players,
+                            minecraftVersion: report.minecraftVersion,
+                            source: 'api_key'
+                        },
+                        'service',
+                        String(service.id)
+                    );
+                    await connection.query(audit.sql, audit.params);
+                }
+                return {
+                    result: 'updated' as const,
+                    statusChanged: heartbeat.statusChanged,
+                    detailsChanged: heartbeat.detailsChanged,
+                    metricsChanged: heartbeat.playersChanged || heartbeat.minecraftVersionChanged
+                };
+            }
         );
-        const service = services[0];
-        if (!service) {
+
+        if (outcome.result === 'missing') {
             sendFailure(res, 404, 'Service nicht gefunden');
             return;
         }
 
-        if (isDatabaseBoolean(service.manual_override)) {
-            sendSuccess(res, { updated: true });
-            return;
-        }
-
-        const detailsToSave = details === undefined
-            ? service.details === HEARTBEAT_EXPIRED_DETAILS ? '' : service.details
-            : serviceDetails;
-        const statusChanged = service.status !== status;
-        const detailsChanged = service.details !== detailsToSave;
-        const statements: Array<{ sql: string; params: SqlParameter[] }> = [{
-            sql: `UPDATE service_status
-                  SET status = ?, details = ?, updated_by = ?, last_reported_at = CURRENT_TIMESTAMP
-                  WHERE id = ?`,
-            params: [status, detailsToSave, apiKeyAuth.actorId, service.id]
-        }];
-        if (statusChanged || detailsChanged) {
-            statements.push(auditStatement(
-                res,
-                apiKeyAuth.actorId,
-                'service_status.reported',
-                { status, source: 'api_key' },
-                'service',
-                String(service.id)
-            ));
-        }
-        await executeTransaction(statements);
         void refreshServiceStatusPush();
-        if (statusChanged || detailsChanged) {
+        if (outcome.statusChanged || outcome.detailsChanged || outcome.metricsChanged) {
             logAuditCommitted(
                 res,
                 apiKeyAuth.actorId,
                 'service_status.reported',
                 'service',
-                String(service.id),
-                { status, source: 'api_key' }
+                String(apiKeyAuth.serviceId),
+                {
+                    status: report.status,
+                    players: report.players,
+                    minecraftVersion: report.minecraftVersion,
+                    source: 'api_key'
+                }
             );
         }
         sendSuccess(res, { updated: true });
@@ -282,10 +347,11 @@ async function getAdminServicesAPIRoute(_req: Request, res: Response) {
             status: PublicServiceStatus['status'];
             details: string;
             manual_override: unknown;
+            whitelist_required: unknown;
             api_key_configured: unknown;
             api_key_created_at: Date | null;
         }>(`
-            SELECT s.id, s.name, s.address, s.status, s.details, s.manual_override,
+            SELECT s.id, s.name, s.address, s.status, s.details, s.manual_override, s.whitelist_required,
                    k.service_id IS NOT NULL AS api_key_configured,
                    k.created_at AS api_key_created_at
             FROM service_status s
@@ -300,6 +366,7 @@ async function getAdminServicesAPIRoute(_req: Request, res: Response) {
                 status: service.status,
                 details: service.details,
                 manualOverride: isDatabaseBoolean(service.manual_override),
+                whitelistRequired: isDatabaseBoolean(service.whitelist_required),
                 apiKeyConfigured: isDatabaseBoolean(service.api_key_configured),
                 apiKeyCreatedAt: service.api_key_created_at
             }))
@@ -314,7 +381,7 @@ async function createServiceAPIRoute(req: Request, res: Response) {
     const admin = requireAdmin(res);
     if (!admin) return;
 
-    const { name, address, status, details, manualOverride } = req.body || {};
+    const { name, address, status, details, manualOverride, whitelistRequired } = req.body || {};
     const serviceName = typeof name === 'string' ? name.trim() : '';
     const serviceAddress = typeof address === 'string' ? address.trim() : '';
     const serviceDetails = typeof details === 'string' ? details.trim() : '';
@@ -322,7 +389,8 @@ async function createServiceAPIRoute(req: Request, res: Response) {
         !serviceAddress || serviceAddress.length > 255 ||
         typeof status !== 'string' || !VALID_SERVICE_STATUSES.includes(status as typeof VALID_SERVICE_STATUSES[number]) ||
         (details !== undefined && typeof details !== 'string') || serviceDetails.length > 255 ||
-        (manualOverride !== undefined && typeof manualOverride !== 'boolean')) {
+        (manualOverride !== undefined && typeof manualOverride !== 'boolean') ||
+        (whitelistRequired !== undefined && typeof whitelistRequired !== 'boolean')) {
         sendFailure(res, 400, 'Ungültige Service-Angaben');
         return;
     }
@@ -338,9 +406,9 @@ async function createServiceAPIRoute(req: Request, res: Response) {
                 const sortOrder = Number(sortRows[0]?.next_sort_order || 1);
                 const inserted = await connection.query<UpsertResult>(
                     `INSERT INTO service_status
-                        (name, address, status, details, sort_order, updated_by, manual_override)
-                     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                    [serviceName, serviceAddress, status, serviceDetails, sortOrder, admin.userId, manualOverride ?? false]
+                        (name, address, status, details, sort_order, updated_by, manual_override, whitelist_required)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [serviceName, serviceAddress, status, serviceDetails, sortOrder, admin.userId, manualOverride ?? false, whitelistRequired ?? false]
                 );
                 const id = Number(inserted.insertId);
                 if (!Number.isSafeInteger(id) || id <= 0) throw new Error('Service ID was not returned after insert');
@@ -441,7 +509,7 @@ async function updateServiceAPIRoute(req: Request, res: Response) {
     if (!admin) return;
 
     const serviceId = Number(req.params.id);
-    const { name, address, status, details, manualOverride } = req.body || {};
+    const { name, address, status, details, manualOverride, whitelistRequired } = req.body || {};
     const serviceName = typeof name === 'string' ? name.trim() : '';
     const serviceAddress = typeof address === 'string' ? address.trim() : '';
     const serviceDetails = typeof details === 'string' ? details.trim() : '';
@@ -450,7 +518,8 @@ async function updateServiceAPIRoute(req: Request, res: Response) {
         !serviceAddress || serviceAddress.length > 255 ||
         typeof status !== 'string' || !VALID_SERVICE_STATUSES.includes(status as typeof VALID_SERVICE_STATUSES[number]) ||
         typeof details !== 'string' || serviceDetails.length > 255 ||
-        typeof manualOverride !== 'boolean') {
+        typeof manualOverride !== 'boolean' ||
+        typeof whitelistRequired !== 'boolean') {
         sendFailure(res, 400, 'Ungültige Service-Angaben');
         return;
     }
@@ -469,9 +538,10 @@ async function updateServiceAPIRoute(req: Request, res: Response) {
             {
                 sql: `UPDATE service_status
                       SET name = ?, address = ?, status = ?, details = ?, updated_by = ?,
-                          manual_override = ?, last_reported_at = NULL
+                          manual_override = ?, whitelist_required = ?, last_reported_at = NULL,
+                          players_online = NULL, players_max = NULL, minecraft_version = NULL
                       WHERE id = ?`,
-                params: [serviceName, serviceAddress, status, serviceDetails, admin.userId, manualOverride, serviceId]
+                params: [serviceName, serviceAddress, status, serviceDetails, admin.userId, manualOverride, whitelistRequired, serviceId]
             },
             auditStatement(
                 res,

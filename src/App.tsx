@@ -175,7 +175,7 @@ function AppContent({ ssrAuth, pathname = '/' }: AppProps) {
     if (currentPath === '/') {
         page = <HomePage />;
     } else if (currentPath === '/servers') {
-        page = <ServersPage />;
+        page = <ServersPage auth={ssrAuth} />;
     } else if (currentPath === '/reset-password') {
         page = <ResetPasswordPage />;
     } else if (currentPath === '/login') {

@@ -95,7 +95,12 @@ global server-status keys are not accepted by this service-specific API.
 Send a `PUT` request to `/api/services/status` over HTTPS with the key in the
 `Authorization` header. The key identifies the service, so the body does not
 include a `name`. `status` must be `online`, `offline`, or `maintenance`;
-`details` is optional and limited to 255 characters.
+`details` is optional and limited to 255 characters. Optional `players` contains
+nonnegative integer `online` and `max` counts (each up to 4,294,967,295), and
+`minecraftVersion` is limited to 32 characters. Older heartbeats may omit
+either field. Counts and version are cleared on offline/maintenance reports and
+heartbeat timeouts, so the public server cards only show them while the service
+is online.
 
 Send a heartbeat about every 30 seconds. After 60 seconds without a report, a
 service without a manual override is persisted as offline once, with the
@@ -116,6 +121,8 @@ while ($true) {
     $body = @{
         status = "online"
         details = "Server läuft"
+        players = @{ online = 3; max = 20 }
+        minecraftVersion = "26.1"
     } | ConvertTo-Json
 
     Invoke-RestMethod `
@@ -133,6 +140,23 @@ Keep each service key in a server-side secret store or environment variable.
 Do not put it in source control, browser code, command history, or logs.
 Successful requests are recorded in `application_logs`; audit entries are
 written when the reported status or details change.
+
+## Minecraft whitelist API
+
+The website's whitelist API stores approved players by canonical Minecraft
+UUID. A signed-in user submits a Minecraft name and service ID; the server
+resolves the name through Mojang's official profile API. Administrators review
+the request before the UUID is added. Approval is a manual moderation step and
+does not itself prove that the applicant owns the Minecraft account. The
+stored UUID is resolved again during approval, so changing a Minecraft name
+does not change the identity being reviewed.
+
+The Paper server reads its own approved list using the existing per-service
+Bearer key. Each service has a monotonically increasing whitelist revision.
+The revision changes only when a UUID is added or removed; the ETag is scoped
+to the service and revision so an unchanged list can be fetched with
+`If-None-Match` and returns `304` with no body. The website remains the source
+of truth while the Minecraft server is offline.
 
 ## Protected file browser
 
@@ -211,7 +235,13 @@ Authentication types:
 | --- | --- | --- |
 | `GET /services` | Public | List services and their current status. A service with an expired heartbeat is returned as offline. |
 | `GET /services/events` | Public | Open a server-sent events stream. Sends an initial service snapshot and pushes changed statuses; clients reconnect automatically. |
-| `PUT /services/status` | Per-service API key | Report a heartbeat with `{ "status": "online", "details": "..." }`. The key identifies the service; `details` is optional. Statuses are `online`, `offline`, or `maintenance`. |
+| `PUT /services/status` | Per-service API key | Report `{ "status": "online", "details": "...", "players": { "online": 3, "max": 20 }, "minecraftVersion": "26.1" }`. Counts and version are optional; statuses are `online`, `offline`, or `maintenance`. |
+| `GET /services/whitelist` | Per-service API key | Return `{ "revision": 42, "players": ["01234567-89ab-cdef-0123-456789abcdef"] }`. Supports `If-None-Match`; returns an empty-body `304` when unchanged. |
+| `POST /services/whitelist/requests` | Session | Submit `{ "serviceId": 1, "playerName": "Notch", "reason": "..." }` (reason required, max. 500 characters). Only allowed for services with `whitelistRequired` enabled in the admin panel. The server resolves and stores the official profile UUID; duplicate profiles are rejected. The profile is also linked to the user's Minecraft accounts. |
+| `GET /account/whitelist` | Session | Own whitelist requests across all servers with status. |
+| `DELETE /account/whitelist/:id` | Session | Remove an own whitelist entry. An approved entry is removed from the server whitelist (revision incremented); the request is deleted and an audit note `whitelist.self_removed` is written. |
+| `GET /account/minecraft`, `POST /account/minecraft`, `DELETE /account/minecraft/:uuid` | Session | List, add (`{ "playerName": "Notch" }`, resolved via Mojang, max. 10) and unlink own Minecraft accounts. |
+| `DELETE /account` | Session | Delete own account with `{ "password": "..." }`. Admin accounts are refused. |
 | `GET /downloads` | Public | List active download links. The `/downloads` website page itself still requires sign-in. |
 | `GET /downloads/file/:storageKey` | Public | Download an active uploaded file as an attachment. The storage key is a UUID. |
 | `GET /files?path=...` | File permission | List files and folders inside the configured downloads directory. `path` is an optional relative folder path. |
@@ -236,6 +266,15 @@ All routes in this section require an authenticated administrator session.
 | `PUT /admin/services/:id` | Update a service's `name`, `address`, `status`, `details`, and `manualOverride`. Setting `manualOverride` to `true` prevents heartbeats and timeouts from changing its status/details. |
 | `DELETE /admin/services/:id` | Delete a service and its associated API key. |
 | `POST /admin/services/:id/api-key` | Generate or rotate that service's API key; returns the new key once and immediately invalidates the old key. |
+| `GET /admin/whitelist/requests?serviceId=1&userId=<uuid>&status=pending` | List whitelist applications; `serviceId`, `userId` and `status` are optional filters. |
+| `PATCH /admin/whitelist/requests/:id` | Approve or reject a request with `{ "status": "approved" }` or `{ "status": "rejected" }` (rejected/revoked requests can be approved later). Approval resolves the profile again and increments the service revision only when adding a UUID. |
+| `GET /admin/whitelist/players?serviceId=1` | List approved players for a service. |
+| `DELETE /admin/whitelist/players/:serviceId/:uuid` | Revoke an approved UUID and increment the service revision. |
+| `POST /admin/whitelist/grant` | Admin edit: put a user on a service's whitelist directly with `{ "userId": "<uuid>", "serviceId": 1, "playerName": "Notch" }`. Creates an approved request with the reason `Admin edit: <admin name>`, links the Minecraft account to the user and increments the revision only when adding a new UUID. Works regardless of `whitelistRequired`; `409` if the profile is approved or requested by another user. |
+| `GET /admin/whitelist/history?userId=<uuid>` | Notes about users who removed themselves from a whitelist (latest 50, from the audit log). |
+| `GET`/`POST /admin/users/:uuid/minecraft` | List or add (`{ "playerName": "Notch" }`) a user's Minecraft accounts. |
+| `PUT /admin/users/:uuid/minecraft/:playerUuid` | Refresh the stored name from Mojang by UUID (also updates whitelist entries). |
+| `DELETE /admin/users/:uuid/minecraft/:playerUuid` | Unlink a Minecraft account; existing whitelist entries stay. |
 | `GET /admin/downloads` | List all downloads, including inactive entries, and return the configured `maxUploadMb` limit. |
 | `PUT /admin/downloads/settings` | Set `{ "maxUploadMb": 16 }`; accepted values are integers from 1 through 512 MB. |
 | `POST /admin/downloads` | Create `{ "title": "...", "description": "...", "url": "https://..." }`. |

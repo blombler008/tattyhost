@@ -1,7 +1,7 @@
 // === DBSchemaSetup.ts ===
 // Hinweis: Diese Datei setzt voraus, dass die Ziel-Datenbank bereits existiert.
 // Die Funktionen definieren lediglich das Schema (Tabellenstruktur) innerhalb der Datenbank.
-// Achte darauf, dass die Verbindungskonfiguration (z. B. Host, Benutzer, Passwort, Datenbankname)
+// Achte darauf, dass die Verbindungskonfiguration (z. B. Host, Benutzer, Passwort, Datenbankname)
 // korrekt gesetzt ist, bevor `setupAllTables()` ausgeführt wird.
 import { execute } from './SQLUtils';
 import { DEFAULT_FILE_LISTING_RULES } from './FileListingDefaults';
@@ -144,7 +144,8 @@ export async function setupRolesTable() {
     `);
     await execute(
         `INSERT IGNORE INTO roles (name, description)
-         VALUES ('user', 'Standard user'), ('admin', 'Administrator')`
+         VALUES ('user', 'Standard user'), ('supporter', 'Supporter'),
+                ('moderator', 'Moderator'), ('admin', 'Administrator')`
     );
 }
 
@@ -257,6 +258,9 @@ export async function setupServiceStatusTable() {
             address VARCHAR(255) NOT NULL,
             status VARCHAR(32) NOT NULL DEFAULT 'maintenance',
             details VARCHAR(255) NOT NULL DEFAULT '',
+            players_online INT UNSIGNED NULL,
+            players_max INT UNSIGNED NULL,
+            minecraft_version VARCHAR(32) NULL,
             sort_order INT NOT NULL DEFAULT 0,
             updated_by CHAR(36),
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -265,11 +269,55 @@ export async function setupServiceStatusTable() {
     `);
     await execute('ALTER TABLE service_status ADD COLUMN IF NOT EXISTS last_reported_at TIMESTAMP NULL');
     await execute('ALTER TABLE service_status ADD COLUMN IF NOT EXISTS manual_override BOOLEAN NOT NULL DEFAULT FALSE');
+    await execute('ALTER TABLE service_status ADD COLUMN IF NOT EXISTS whitelist_revision BIGINT UNSIGNED NOT NULL DEFAULT 0');
+    await execute('ALTER TABLE service_status ADD COLUMN IF NOT EXISTS whitelist_required BOOLEAN NOT NULL DEFAULT FALSE');
+    await execute('ALTER TABLE service_status ADD COLUMN IF NOT EXISTS players_online INT UNSIGNED NULL');
+    await execute('ALTER TABLE service_status ADD COLUMN IF NOT EXISTS players_max INT UNSIGNED NULL');
+    await execute('ALTER TABLE service_status ADD COLUMN IF NOT EXISTS minecraft_version VARCHAR(32) NULL');
+}
+
+export async function setupServiceWhitelistTables() {
     await execute(`
-        INSERT IGNORE INTO service_status (name, address, status, details, sort_order)
-        VALUES
-            ('Minecraft', 'tattyhost.com:25565', 'offline', 'Derzeit nicht erreichbar', 1),
-            ('TeamSpeak', 'ts.tattyhost.com', 'maintenance', 'Wir sind bald wieder da', 2)
+        CREATE TABLE IF NOT EXISTS service_whitelist_players (
+            service_id INT NOT NULL,
+            player_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            player_name VARCHAR(16) NOT NULL,
+            approved_by CHAR(36),
+            approved_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (service_id, player_uuid),
+            FOREIGN KEY (service_id) REFERENCES service_status(id) ON DELETE CASCADE,
+            FOREIGN KEY (approved_by) REFERENCES users(uuid) ON DELETE SET NULL
+        );
+    `);
+    await execute(`
+        CREATE TABLE IF NOT EXISTS service_whitelist_requests (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            service_id INT NOT NULL,
+            player_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            player_name VARCHAR(16) NOT NULL,
+            reason VARCHAR(500) NOT NULL DEFAULT '',
+            status VARCHAR(16) NOT NULL DEFAULT 'pending',
+            requested_by CHAR(36),
+            reviewed_by CHAR(36),
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_service_whitelist_request_player (service_id, player_uuid),
+            INDEX idx_service_whitelist_requests_status (service_id, status, created_at),
+            FOREIGN KEY (service_id) REFERENCES service_status(id) ON DELETE CASCADE,
+            FOREIGN KEY (requested_by) REFERENCES users(uuid) ON DELETE SET NULL,
+            FOREIGN KEY (reviewed_by) REFERENCES users(uuid) ON DELETE SET NULL
+        );
+    `);
+    await execute("ALTER TABLE service_whitelist_requests ADD COLUMN IF NOT EXISTS reason VARCHAR(500) NOT NULL DEFAULT '' AFTER player_name");
+    await execute(`
+        CREATE TABLE IF NOT EXISTS user_minecraft_accounts (
+            user_uuid CHAR(36) NOT NULL,
+            player_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            player_name VARCHAR(16) NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_uuid, player_uuid),
+            FOREIGN KEY (user_uuid) REFERENCES users(uuid) ON DELETE CASCADE
+        );
     `);
 }
 
@@ -306,4 +354,5 @@ export async function setupAllTables() {
     await setupFileListingSettingsTable();
     await setupServiceStatusTable();
     await setupServiceStatusServiceApiKeysTable();
+    await setupServiceWhitelistTables();
 }

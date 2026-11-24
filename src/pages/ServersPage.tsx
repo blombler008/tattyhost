@@ -1,5 +1,8 @@
-import { useServiceStatus } from '../hooks/use-service-status';
+import { useState } from 'react';
+import WhitelistRequestDialog from '../components/WhitelistRequestDialog';
+import { useServiceStatus, type Service } from '../hooks/use-service-status';
 import { useI18n } from '../i18n-context';
+import type { SSRAuthState } from '../middleware/check-auth';
 
 const statusStyles = {
     online: {
@@ -19,9 +22,10 @@ const statusStyles = {
     }
 } as const;
 
-export default function ServersPage() {
+export default function ServersPage({ auth }: { auth?: SSRAuthState }) {
     const { services, loading, error } = useServiceStatus();
     const { t } = useI18n();
+    const [whitelistService, setWhitelistService] = useState<Service | null>(null);
 
     return (
         <section className="mx-auto max-w-6xl px-5 py-12 sm:px-8 sm:py-16">
@@ -63,11 +67,40 @@ export default function ServersPage() {
                                     <p className="theme-muted text-xs">{t('Server-Adresse')}</p>
                                     <p className="mt-1 break-all font-mono text-sm text-sky-200">{service.address}</p>
                                     {service.details && <p className="theme-muted mt-3 text-sm leading-6">{t(service.details)}</p>}
+                                    {service.status === 'online' &&
+                                        (service.playersOnline !== null || service.minecraftVersion) && (
+                                        <div className="theme-muted mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                                            {service.playersOnline !== null && service.playersMax !== null && (
+                                                <span>{t('Spieler')}: {service.playersOnline} / {service.playersMax}</span>
+                                            )}
+                                            {service.minecraftVersion && (
+                                                <span>{t('Minecraft-Version')}: {service.minecraftVersion}</span>
+                                            )}
+                                        </div>
+                                    )}
+                                    {service.whitelistRequired && (
+                                        <button
+                                            className="mt-4 rounded-lg bg-sky-300 px-3 py-2 text-sm font-semibold text-slate-950 transition hover:bg-sky-200"
+                                            type="button"
+                                            onClick={() => setWhitelistService(service)}
+                                        >
+                                            {t('Whitelist beantragen')}
+                                        </button>
+                                    )}
                                 </div>
                             </article>
                         );
                     })}
                 </div>
+            )}
+
+            {whitelistService && (
+                <WhitelistRequestDialog
+                    serviceId={whitelistService.id}
+                    serviceName={whitelistService.name}
+                    isLoggedIn={Boolean(auth?.isLoggedIn)}
+                    onClose={() => setWhitelistService(null)}
+                />
             )}
 
             <p className="theme-muted mt-6 text-xs">{t('Live-Status · Push-Aktualisierung')}</p>

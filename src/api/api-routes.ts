@@ -1,9 +1,11 @@
 import { Router } from 'express';
 import { createAccountRouter } from './api-account.ts';
+import { createAccountMinecraftRouter } from './api-account-minecraft.ts';
 import { createAdminRouter } from './api-admin.ts';
 import { createAuthRouter } from './api-auth.ts';
 import { createFilesRouter } from './api-files.ts';
 import { createServicesRouter } from './api-services.ts';
+import { createWhitelistRouter } from './api-whitelist.ts';
 
 export default function createApiRouter(app: Router): Router {
     const router = Router();
@@ -13,7 +15,9 @@ export default function createApiRouter(app: Router): Router {
     router.use(
         createAuthRouter(),
         createAccountRouter(),
+        createAccountMinecraftRouter(),
         createServicesRouter(),
+        createWhitelistRouter(),
         createFilesRouter(),
         adminRouter
     );

@@ -68,6 +68,17 @@ export default function HomePage() {
                                             </div>
                                             <p className="mt-3 font-mono text-sm text-sky-200">{service.address}</p>
                                             {service.details && <p className="mt-1 text-xs text-slate-500">{t(service.details)}</p>}
+                                            {service.status === 'online' &&
+                                                (service.playersOnline !== null || service.minecraftVersion) && (
+                                                <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-400">
+                                                    {service.playersOnline !== null && service.playersMax !== null && (
+                                                        <span>{t('Spieler')}: {service.playersOnline} / {service.playersMax}</span>
+                                                    )}
+                                                    {service.minecraftVersion && (
+                                                        <span>{t('Minecraft-Version')}: {service.minecraftVersion}</span>
+                                                    )}
+                                                </div>
+                                            )}
                                         </article>
                                     ))}
                                 </>

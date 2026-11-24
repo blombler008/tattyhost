@@ -1,6 +1,16 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useI18n } from '../i18n-context';
 import { useToast } from '../toast-context';
+import settingsTabIcon from '../assets/material-icons/settings-cogwheel-button.svg';
+import serverTabIcon from '../assets/material-icons/server-rack-with-three-levels.svg';
+import minecraftTabIcon from '../assets/material-icons/gamepad.svg';
+import { DeleteAccountSection, MinecraftTab, ServerTab } from '../components/AccountTabs';
+
+const accountTabs = [
+    { id: 'general', label: 'Allgemeines', icon: settingsTabIcon },
+    { id: 'server', label: 'Server', icon: serverTabIcon },
+    { id: 'minecraft', label: 'Minecraft', icon: minecraftTabIcon }
+] as const;
 
 type UserSettings = {
     language: string;
@@ -36,6 +46,7 @@ const timezones = [
 export default function UserSettingsPage() {
     const { t, setLanguage, setDarkMode } = useI18n();
     const { toast } = useToast();
+    const [tab, setTab] = useState<'general' | 'server' | 'minecraft'>('general');
     const [settings, setSettings] = useState<UserSettings | null>(null);
     const [account, setAccount] = useState<UserAccount | null>(null);
     const [loading, setLoading] = useState(true);
@@ -187,6 +198,24 @@ export default function UserSettingsPage() {
                 <p className="mt-8 text-sm theme-muted" role="status">{t('Einstellungen werden geladen...')}</p>
             ) : settings && account && (
                 <div className="mt-8 space-y-8">
+                    <div className="flex gap-2 border-b border-[var(--theme-border)]" role="tablist">
+                        {accountTabs.map((item) => (
+                            <button
+                                key={item.id}
+                                className={`-mb-px flex items-center gap-2 border-b-2 px-4 py-2 text-sm font-medium transition ${tab === item.id ? 'border-sky-300 theme-text' : 'border-transparent theme-muted hover:text-sky-200'}`}
+                                type="button"
+                                role="tab"
+                                aria-selected={tab === item.id}
+                                onClick={() => setTab(item.id)}
+                            >
+                                <img className="h-5 w-5 material-icon" src={item.icon} alt="" />
+                                {t(item.label)}
+                            </button>
+                        ))}
+                    </div>
+                    {tab === 'server' && <ServerTab />}
+                    {tab === 'minecraft' && <MinecraftTab />}
+                    {tab === 'general' && <>
                     <section className="rounded-2xl border p-5 theme-panel sm:p-7">
                         <h2 className="text-xl font-semibold theme-text">{t('Konto')}</h2>
                         <p className="mt-2 text-sm theme-muted">
@@ -338,6 +367,8 @@ export default function UserSettingsPage() {
                         {saving ? t('Speichern...') : t('Änderungen speichern')}
                     </button>
                     </form>
+                    <DeleteAccountSection />
+                    </>}
                 </div>
             )}
         </section>

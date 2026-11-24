@@ -4,6 +4,21 @@ import { useI18n } from '../i18n-context';
 import { useToast } from '../toast-context';
 import addIcon from '../assets/material-icons/round-add-button.svg';
 import infoIcon from '../assets/material-icons/round-info-button.svg';
+import cloudIcon from '../assets/material-icons/cloud-outline.svg';
+import whitelistIcon from '../assets/material-icons/google-drive-document.svg';
+import fileIcon from '../assets/material-icons/save-button.svg';
+import dashboardTabIcon from '../assets/material-icons/show-apps-button.svg';
+import usersTabIcon from '../assets/material-icons/users-social-symbol.svg';
+import filesTabIcon from '../assets/material-icons/folder-symbol.svg';
+import downloadsTabIcon from '../assets/material-icons/download-button.svg';
+import servicesTabIcon from '../assets/material-icons/server-rack-with-three-levels.svg';
+import activeAccountIcon from '../assets/material-icons/round-account-button-with-user-inside.svg';
+import sessionIcon from '../assets/material-icons/history-clock-button.svg';
+import failedLoginIcon from '../assets/material-icons/locked-padlock-outline.svg';
+import userRoleIcon from '../assets/material-icons/user-outline.svg';
+import supporterRoleIcon from '../assets/material-icons/headset.svg';
+import moderatorRoleIcon from '../assets/material-icons/chat-bubbles.svg';
+import adminRoleIcon from '../assets/basics/shield.svg';
 
 type Overview = {
     users: number;
@@ -20,7 +35,8 @@ type AdminUser = {
     is_active: boolean;
     has_cloud_access: boolean;
     has_file_access: boolean;
-    role: 'user' | 'admin';
+    has_whitelist: boolean;
+    role: 'user' | 'supporter' | 'moderator' | 'admin';
     created_at: string;
 };
 
@@ -46,9 +62,110 @@ type Service = {
     status: 'online' | 'offline' | 'maintenance';
     details: string;
     manualOverride: boolean;
+    whitelistRequired: boolean;
     apiKeyConfigured: boolean;
     apiKeyCreatedAt: string | null;
 };
+
+type WhitelistStatus = 'pending' | 'approved' | 'rejected' | 'revoked';
+
+type WhitelistEntry = {
+    id: number;
+    service_id: number;
+    service_name: string;
+    player_uuid: string;
+    player_name: string;
+    reason: string;
+    status: WhitelistStatus;
+    requested_by: string | null;
+    requested_by_name: string | null;
+    reviewed_by_name: string | null;
+    created_at: string;
+};
+
+type WhitelistAction = 'approve' | 'reject' | 'revoke';
+
+type MinecraftAccount = {
+    player_uuid: string;
+    player_name: string;
+};
+
+type WhitelistHistoryNote = {
+    id: number;
+    service_name: string | null;
+    player_name: string | null;
+    logged_at: string;
+};
+
+type WhitelistEntryCardProps = {
+    entry: WhitelistEntry;
+    saving: boolean;
+    showRequester: boolean;
+    onAction: (entry: WhitelistEntry, action: WhitelistAction) => void;
+};
+
+const roleIcons = {
+    user: userRoleIcon,
+    supporter: supporterRoleIcon,
+    moderator: moderatorRoleIcon,
+    admin: adminRoleIcon
+};
+
+const permissionIcons = [
+    { label: 'Cloud-Zugang', icon: cloudIcon },
+    { label: 'Whitelist', icon: whitelistIcon },
+    { label: 'Dateizugriff', icon: fileIcon }
+];
+
+const whitelistStatusLabels: Record<WhitelistStatus, string> = {
+    pending: 'Offen',
+    approved: 'Freigegeben',
+    rejected: 'Abgelehnt',
+    revoked: 'Widerrufen'
+};
+
+function WhitelistEntryCard({ entry, saving, showRequester, onAction }: WhitelistEntryCardProps) {
+    const { language, t } = useI18n();
+    const canApprove = entry.status !== 'approved';
+    const canReject = entry.status === 'pending';
+    const canRevoke = entry.status === 'approved';
+
+    return (
+        <article className="theme-panel rounded-xl border p-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div className="min-w-0 space-y-1">
+                    <h3 className="theme-text font-semibold">
+                        {entry.player_name} <span className="theme-muted text-sm font-normal">· {t(entry.service_name)}</span>
+                    </h3>
+                    <p className="theme-muted break-all font-mono text-xs">{entry.player_uuid}</p>
+                    <p className="theme-muted text-sm">
+                        {t(whitelistStatusLabels[entry.status])}
+                        {showRequester && entry.requested_by_name && ` · ${t('Von')} ${entry.requested_by_name}`}
+                        {` · ${new Date(entry.created_at).toLocaleString(language === 'de' ? 'de-DE' : 'en-US')}`}
+                    </p>
+                    {entry.reason && <p className="theme-text whitespace-pre-wrap text-sm">{entry.reason}</p>}
+                </div>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                    {canApprove && (
+                        <button className="rounded-lg bg-emerald-300 px-3 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50" type="button" disabled={saving} onClick={() => onAction(entry, 'approve')}>
+                            {t('Annehmen')}
+                        </button>
+                    )}
+                    {canReject && (
+                        <button className="rounded-lg border border-rose-400/20 px-3 py-2 text-sm text-rose-200 disabled:opacity-50" type="button" disabled={saving} onClick={() => onAction(entry, 'reject')}>
+                            {t('Ablehnen')}
+                        </button>
+                    )}
+                    {canRevoke && (
+                        <button className="rounded-lg border border-rose-400/20 px-3 py-2 text-sm text-rose-200 disabled:opacity-50" type="button" disabled={saving} onClick={() => onAction(entry, 'revoke')}>
+                            {t('Widerrufen')}
+                        </button>
+                    )}
+                </div>
+            </div>
+        </article>
+    );
+}
 
 type ApiResult<T> = { success: boolean; error?: string } & T;
 
@@ -87,7 +204,17 @@ type AdminPageProps = {
 export default function AdminPage({ auth }: AdminPageProps) {
     const { language, t } = useI18n();
     const { toast } = useToast();
-    const [tab, setTab] = useState<'overview' | 'users' | 'files' | 'downloads' | 'services'>('overview');
+    const [tab, setTab] = useState<'overview' | 'users' | 'files' | 'downloads' | 'services' | 'whitelist'>('overview');
+    const [whitelistFilter, setWhitelistFilter] = useState<WhitelistStatus | 'all'>('pending');
+    const [whitelistEntries, setWhitelistEntries] = useState<WhitelistEntry[]>([]);
+    const [infoUserId, setInfoUserId] = useState<string | null>(null);
+    const [showUserLegend, setShowUserLegend] = useState(false);
+    const [userWhitelistEntries, setUserWhitelistEntries] = useState<WhitelistEntry[]>([]);
+    const [userWhitelistHistory, setUserWhitelistHistory] = useState<WhitelistHistoryNote[]>([]);
+    const [userMinecraftAccounts, setUserMinecraftAccounts] = useState<MinecraftAccount[]>([]);
+    const [newMinecraftName, setNewMinecraftName] = useState('');
+    const [grantServiceId, setGrantServiceId] = useState('');
+    const [grantName, setGrantName] = useState('');
     const [overview, setOverview] = useState<Overview | null>(null);
     const [users, setUsers] = useState<AdminUser[]>([]);
     const [downloads, setDownloads] = useState<AdminDownload[]>([]);
@@ -100,7 +227,8 @@ export default function AdminPage({ auth }: AdminPageProps) {
         address: '',
         status: 'maintenance' as Service['status'],
         details: '',
-        manualOverride: false
+        manualOverride: false,
+        whitelistRequired: false
     });
     const [fileListingRules, setFileListingRules] = useState<FileListingRules | null>(null);
     const [revealedServiceApiKeys, setRevealedServiceApiKeys] = useState<Record<number, string>>({});
@@ -115,6 +243,12 @@ export default function AdminPage({ auth }: AdminPageProps) {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const currentUserId = auth?.session?.userId;
+    const roleLabels: Record<AdminUser['role'], string> = {
+        user: t('User'),
+        supporter: t('Supporter'),
+        moderator: t('Moderator'),
+        admin: 'Admin'
+    };
 
     const loadOverview = useCallback(async () => {
         const data = await requestJson<{ overview: Overview }>('/api/admin/overview');
@@ -141,6 +275,30 @@ export default function AdminPage({ auth }: AdminPageProps) {
         const data = await requestJson<{ services: Service[] }>('/api/admin/services');
         setServices(data.services);
     }, []);
+
+    const loadWhitelist = useCallback(async () => {
+        const params = whitelistFilter === 'all' ? '' : `?status=${whitelistFilter}`;
+        const data = await requestJson<{ requests: WhitelistEntry[] }>(`/api/admin/whitelist/requests${params}`);
+        setWhitelistEntries(data.requests);
+    }, [whitelistFilter]);
+
+    const loadUserWhitelist = useCallback(async (userId: string) => {
+        const [data, historyData, minecraftData] = await Promise.all([
+            requestJson<{ requests: WhitelistEntry[] }>(`/api/admin/whitelist/requests?userId=${encodeURIComponent(userId)}`),
+            requestJson<{ history: WhitelistHistoryNote[] }>(`/api/admin/whitelist/history?userId=${encodeURIComponent(userId)}`),
+            requestJson<{ accounts: MinecraftAccount[] }>(`/api/admin/users/${encodeURIComponent(userId)}/minecraft`)
+        ]);
+        setUserWhitelistEntries(data.requests);
+        setUserWhitelistHistory(historyData.history);
+        setUserMinecraftAccounts(minecraftData.accounts);
+    }, []);
+
+    useEffect(() => {
+        if (tab !== 'whitelist') return;
+        loadWhitelist().catch((loadError: unknown) => {
+            toast(loadError instanceof Error ? loadError.message : 'Whitelist konnte nicht geladen werden', 'error');
+        });
+    }, [tab, loadWhitelist, toast]);
 
     const refresh = useCallback(async () => {
         setLoading(true);
@@ -355,6 +513,52 @@ export default function AdminPage({ auth }: AdminPageProps) {
         })();
     };
 
+    const handleWhitelistAction = (entry: WhitelistEntry, action: WhitelistAction) => {
+        if (action === 'revoke' &&
+            !window.confirm(t('Freigabe für "{name}" wirklich widerrufen?', { name: entry.player_name }))) return;
+        const request = () => action === 'revoke'
+            ? requestJson(`/api/admin/whitelist/players/${entry.service_id}/${encodeURIComponent(entry.player_uuid)}`, { method: 'DELETE' })
+            : requestJson(`/api/admin/whitelist/requests/${entry.id}`, {
+                method: 'PATCH',
+                body: JSON.stringify({ status: action === 'approve' ? 'approved' : 'rejected' })
+            });
+        void perform(
+            request,
+            async () => {
+                await loadWhitelist();
+                if (infoUserId) await loadUserWhitelist(infoUserId);
+            },
+            t('Whitelist aktualisiert.')
+        );
+    };
+
+    const handleMinecraftAction = (
+        userId: string,
+        request: () => Promise<unknown>,
+        message: string
+    ) => {
+        void perform(request, async () => {
+            setNewMinecraftName('');
+            await loadUserWhitelist(userId);
+            await loadWhitelist();
+        }, message);
+    };
+
+    const toggleUserInfo = (user: AdminUser) => {
+        if (infoUserId === user.uuid) {
+            setInfoUserId(null);
+            return;
+        }
+        setInfoUserId(user.uuid);
+        setUserWhitelistEntries([]);
+        setUserWhitelistHistory([]);
+        setNewMinecraftName('');
+        setGrantName('');
+        loadUserWhitelist(user.uuid).catch((loadError: unknown) => {
+            toast(loadError instanceof Error ? loadError.message : 'Whitelist konnte nicht geladen werden', 'error');
+        });
+    };
+
     const saveService = (service: Service) =>
         perform(
             () => requestJson(`/api/admin/services/${service.id}`, {
@@ -364,7 +568,8 @@ export default function AdminPage({ auth }: AdminPageProps) {
                     address: service.address,
                     status: service.status,
                     details: service.details,
-                    manualOverride: service.manualOverride
+                    manualOverride: service.manualOverride,
+                    whitelistRequired: service.whitelistRequired
                 })
             }),
             loadServices,
@@ -385,7 +590,8 @@ export default function AdminPage({ auth }: AdminPageProps) {
                     address: '',
                     status: 'maintenance',
                     details: '',
-                    manualOverride: false
+                    manualOverride: false,
+                    whitelistRequired: false
                 });
                 setRevealedServiceApiKeys((current) => ({ ...current, [data.serviceId]: data.apiKey }));
                 await loadServices();
@@ -442,11 +648,12 @@ export default function AdminPage({ auth }: AdminPageProps) {
     };
 
     const tabs = [
-        { id: 'overview', label: 'Dashboard' },
-        { id: 'users', label: t('Benutzer') },
-        { id: 'files', label: t('Dateien') },
-        { id: 'downloads', label: 'Downloads' },
-        { id: 'services', label: t('Serverstatus') }
+        { id: 'overview', label: 'Dashboard', icon: dashboardTabIcon },
+        { id: 'users', label: t('Benutzer'), icon: usersTabIcon },
+        { id: 'files', label: t('Dateien'), icon: filesTabIcon },
+        { id: 'downloads', label: 'Downloads', icon: downloadsTabIcon },
+        { id: 'services', label: t('Serverstatus'), icon: servicesTabIcon },
+        { id: 'whitelist', label: 'Whitelist', icon: whitelistIcon }
     ] as const;
 
     return (
@@ -457,21 +664,22 @@ export default function AdminPage({ auth }: AdminPageProps) {
                     <h1 className="theme-text text-3xl font-semibold">{t('Admin Services')}</h1>
                     <p className="theme-muted mt-2">{t('Benutzer, Dateien, Downloads und Serverstatus verwalten.')}</p>
                 </div>
-                <button className="rounded-lg border px-4 py-2 text-sm theme-text transition hover:bg-white/5 disabled:opacity-50" onClick={() => void refresh()} disabled={loading || saving}>
+                <button className="rounded-lg px-4 py-2 text-sm theme-text transition hover:bg-white/5 disabled:opacity-50" onClick={() => void refresh()} disabled={loading || saving}>
                     {t('Aktualisieren')}
                 </button>
             </div>
 
-            <div className="mt-8 flex gap-2 overflow-x-auto border-b border-[var(--theme-border)] pb-2" role="tablist" aria-label={t('Admin-Bereiche')}>
+            <div className="mt-8 flex gap-2 overflow-x-auto border-b border-[var(--theme-border)]" role="tablist" aria-label={t('Admin-Bereiche')}>
                 {tabs.map((item) => (
                     <button
                         key={item.id}
-                        className={`shrink-0 rounded-lg px-4 py-2 text-sm transition ${tab === item.id ? 'bg-sky-300 text-slate-950' : 'theme-muted hover:bg-white/5 hover:text-white'}`}
+                        className={`-mb-px flex shrink-0 items-center gap-2 border-b-2 px-4 py-2 text-sm font-medium transition ${tab === item.id ? 'border-sky-300 theme-text' : 'border-transparent theme-muted hover:text-sky-200'}`}
                         type="button"
                         role="tab"
                         aria-selected={tab === item.id}
                         onClick={() => setTab(item.id)}
                     >
+                        <img className="material-icon h-5 w-5" src={item.icon} alt="" />
                         {item.label}
                     </button>
                 ))}
@@ -480,7 +688,7 @@ export default function AdminPage({ auth }: AdminPageProps) {
             {tab === 'services' && (
                 <div className="mt-3 flex justify-end gap-2">
                     <button
-                        className={`rounded-lg border p-2 transition hover:bg-white/5 ${showServiceInfo ? 'bg-white/10' : ''}`}
+                        className={`rounded-lg p-2 transition hover:bg-white/5 ${showServiceInfo ? 'bg-white/10' : ''}`}
                         type="button"
                         aria-label={t('Service-Information')}
                         aria-expanded={showServiceInfo}
@@ -488,10 +696,10 @@ export default function AdminPage({ auth }: AdminPageProps) {
                         title={t('Service-Information')}
                         onClick={() => setShowServiceInfo((visible) => !visible)}
                     >
-                        <img className="h-5 w-5 invert" src={infoIcon} alt="" />
+                        <img className="h-5 w-5 material-icon" src={infoIcon} alt="" />
                     </button>
                     <button
-                        className={`rounded-lg border p-2 transition hover:bg-white/5 ${showServiceForm ? 'bg-white/10' : ''}`}
+                        className={`rounded-lg p-2 transition hover:bg-white/5 ${showServiceForm ? 'bg-white/10' : ''}`}
                         type="button"
                         aria-label={t('Service hinzufügen')}
                         aria-expanded={showServiceForm}
@@ -499,7 +707,7 @@ export default function AdminPage({ auth }: AdminPageProps) {
                         title={t('Service hinzufügen')}
                         onClick={() => setShowServiceForm((visible) => !visible)}
                     >
-                        <img className="h-5 w-5 invert" src={addIcon} alt="" />
+                        <img className="h-5 w-5 material-icon" src={addIcon} alt="" />
                     </button>
                 </div>
             )}
@@ -509,14 +717,17 @@ export default function AdminPage({ auth }: AdminPageProps) {
                     {tab === 'overview' && overview && (
                         <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                             {[
-                                [t('Benutzer'), overview.users],
-                                [t('Aktive Konten'), overview.activeUsers],
-                                [t('Aktive Sessions'), overview.activeSessions],
-                                [t('Fehlgeschlagene Logins (24 h)'), overview.failedLogins24h],
-                                [t('Aktive Downloads'), overview.activeDownloads]
-                            ].map(([label, value]) => (
+                                [t('Benutzer'), overview.users, usersTabIcon],
+                                [t('Aktive Konten'), overview.activeUsers, activeAccountIcon],
+                                [t('Aktive Sessions'), overview.activeSessions, sessionIcon],
+                                [t('Fehlgeschlagene Logins (24 h)'), overview.failedLogins24h, failedLoginIcon],
+                                [t('Aktive Downloads'), overview.activeDownloads, downloadsTabIcon]
+                            ].map(([label, value, icon]) => (
                                 <article key={label} className="theme-panel rounded-2xl border p-5">
-                                    <p className="theme-muted text-sm">{label}</p>
+                                    <p className="theme-muted flex items-center gap-2 text-sm">
+                                        <img className="h-4 w-4 material-icon" src={icon as string} alt="" />
+                                        {label}
+                                    </p>
                                     <p className="theme-text mt-2 text-3xl font-semibold">{value}</p>
                                 </article>
                             ))}
@@ -526,7 +737,7 @@ export default function AdminPage({ auth }: AdminPageProps) {
                     {tab === 'users' && (
                         <div className="mt-6">
                             <form
-                                className="mb-5 flex gap-2"
+                                className="mb-5 flex items-center gap-2"
                                 onSubmit={(event) => {
                                     event.preventDefault();
                                     void perform(() => loadUsers(search), async () => undefined);
@@ -534,50 +745,255 @@ export default function AdminPage({ auth }: AdminPageProps) {
                             >
                                 <input className="theme-input min-w-0 flex-1 rounded-lg border px-3 py-2 text-sm" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('Benutzername oder E-Mail suchen')} />
                                 <button className="rounded-lg bg-sky-300 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50" disabled={saving}>{t('Suchen')}</button>
+                                <button
+                                    className={`rounded-lg p-2 transition hover:bg-white/5 ${showUserLegend ? 'bg-white/10' : ''}`}
+                                    type="button"
+                                    aria-label={t('Legende')}
+                                    aria-expanded={showUserLegend}
+                                    title={t('Legende')}
+                                    onClick={() => setShowUserLegend((visible) => !visible)}
+                                >
+                                    <img className="h-5 w-5 material-icon" src={infoIcon} alt="" />
+                                </button>
                             </form>
+                            {showUserLegend && (
+                                <div className="theme-panel mb-5 grid gap-5 rounded-xl border p-4 sm:grid-cols-2">
+                                    <div>
+                                        <h3 className="theme-text mb-2 text-sm font-semibold">{t('Berechtigungen')}</h3>
+                                        <ul className="theme-text space-y-2 text-sm">
+                                            {permissionIcons.map((item) => (
+                                                <li key={item.label} className="flex items-center gap-3">
+                                                    <img className="h-5 w-5 shrink-0 material-icon" src={item.icon} alt="" />
+                                                    {t(item.label)}
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                    <div>
+                                        <h3 className="theme-text mb-2 text-sm font-semibold">{t('Rolle')}</h3>
+                                        <ul className="theme-text space-y-2 text-sm">
+                                            {(Object.keys(roleIcons) as AdminUser['role'][]).map((role) => (
+                                                <li key={role} className="flex items-center gap-3">
+                                                    <img className="h-5 w-5 shrink-0 material-icon" src={roleIcons[role]} alt="" />
+                                                    {roleLabels[role]}
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                </div>
+                            )}
                             <div className="space-y-3">
                                 {users.map((user) => {
                                     const isSelf = user.uuid === currentUserId;
+                                    const userPermissions = [
+                                        user.has_cloud_access && permissionIcons[0],
+                                        user.has_whitelist && permissionIcons[1],
+                                        user.has_file_access && permissionIcons[2]
+                                    ].filter((item) => item !== false);
                                     return (
                                         <article key={user.uuid} className="theme-panel rounded-xl border p-4">
-                                            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                                                <div className="min-w-0">
+                                            <div className="flex items-center gap-4">
+                                                <button
+                                                    className={`shrink-0 rounded-lg p-2 transition hover:bg-white/5 ${infoUserId === user.uuid ? 'bg-white/10' : ''}`}
+                                                    type="button"
+                                                    aria-label={t('Whitelist und Minecraft-Informationen von {username}', { username: user.username })}
+                                                    aria-expanded={infoUserId === user.uuid}
+                                                    title={t('Whitelist und Minecraft-Informationen')}
+                                                    onClick={() => toggleUserInfo(user)}
+                                                >
+                                                    <img className="h-5 w-5 material-icon" src={infoIcon} alt="" />
+                                                </button>
+                                                <img className="h-6 w-6 shrink-0 material-icon" src={roleIcons[user.role]} alt={roleLabels[user.role]} title={roleLabels[user.role]} />
+                                                <div className="min-w-0 flex-1">
                                                     <h2 className="theme-text font-semibold">{user.username}</h2>
                                                     <p className="theme-muted break-all text-sm">{user.email}</p>
                                                 </div>
-                                                <div className="flex flex-wrap items-center gap-3">
-                                                    <select className="theme-input rounded-lg border px-3 py-2 text-sm" value={user.role} disabled={saving || isSelf} aria-label={t('Rolle von {username}', { username: user.username })} onChange={(event) => void updateUserRole(user, event.target.value as AdminUser['role'])}>
-                                                        <option value="user">{t('User')}</option>
-                                                        <option value="admin">Admin</option>
-                                                    </select>
-                                                    <label className="flex items-center gap-2 text-sm theme-muted">
-                                                        <input type="checkbox" checked={user.is_active} disabled={saving || isSelf} onChange={(event) => void updateUserStatus(user, event.target.checked)} />
-                                                        {t('Aktiv')}
-                                                    </label>
-                                                    <label className="flex items-center gap-2 text-sm theme-muted">
-                                                        <input type="checkbox" checked={user.has_cloud_access} disabled={saving} onChange={(event) => void updateUserCloudAccess(user, event.target.checked)} />
-                                                        {t('Cloud-Zugang')}
-                                                    </label>
-                                                    <label className="flex items-center gap-2 text-sm theme-muted">
-                                                        <input type="checkbox" checked={user.has_file_access} disabled={saving} onChange={(event) => void updateUserFileAccess(user, event.target.checked)} />
-                                                        {t('Dateizugriff')}
-                                                    </label>
-                                                    <button
-                                                        className="rounded-lg border px-3 py-2 text-sm theme-text transition hover:bg-white/5 disabled:opacity-50"
-                                                        type="button"
-                                                        disabled={saving}
-                                                        onClick={() => {
-                                                            setPasswordResetUserId((current) => current === user.uuid ? null : user.uuid);
-                                                            setPasswordResetEmail('');
-                                                        }}
-                                                    >
-                                                        {t('Passwort-Reset')}
-                                                    </button>
+                                                <div className="flex shrink-0 items-center gap-3">
+                                                    <span className="flex items-center gap-1.5">
+                                                        {userPermissions.map((item) => (
+                                                            <img key={item.label} className="h-5 w-5 material-icon" src={item.icon} alt={t(item.label)} title={t(item.label)} />
+                                                        ))}
+                                                    </span>
                                                     <button className="rounded-lg border border-rose-400/20 px-3 py-2 text-sm text-rose-200 transition hover:bg-rose-400/10 disabled:opacity-50" disabled={saving || isSelf} onClick={() => deleteUser(user)}>
                                                         {t('Löschen')}
                                                     </button>
                                                 </div>
                                             </div>
+                                            {infoUserId === user.uuid && (
+                                                <div className="mt-4 space-y-3 border-t border-[var(--theme-border)] pt-4">
+                                                    <div className="flex flex-wrap items-center gap-3">
+                                                        <select className="theme-input rounded-lg border px-3 py-2 text-sm" value={user.role} disabled={saving || isSelf} aria-label={t('Rolle von {username}', { username: user.username })} onChange={(event) => void updateUserRole(user, event.target.value as AdminUser['role'])}>
+                                                            <option value="user">{t('User')}</option>
+                                                            <option value="supporter">{t('Supporter')}</option>
+                                                            <option value="moderator">{t('Moderator')}</option>
+                                                            <option value="admin">Admin</option>
+                                                        </select>
+                                                        <label className="flex items-center gap-2 text-sm theme-muted">
+                                                            <input type="checkbox" checked={user.is_active} disabled={saving || isSelf} onChange={(event) => void updateUserStatus(user, event.target.checked)} />
+                                                            {t('Aktiv')}
+                                                        </label>
+                                                        <label className="flex items-center gap-2 text-sm theme-muted">
+                                                            <input type="checkbox" checked={user.has_cloud_access} disabled={saving} onChange={(event) => void updateUserCloudAccess(user, event.target.checked)} />
+                                                            {t('Cloud-Zugang')}
+                                                        </label>
+                                                        <label className="flex items-center gap-2 text-sm theme-muted">
+                                                            <input type="checkbox" checked={user.has_file_access} disabled={saving} onChange={(event) => void updateUserFileAccess(user, event.target.checked)} />
+                                                            {t('Dateizugriff')}
+                                                        </label>
+                                                        <button
+                                                            className="rounded-lg border px-3 py-2 text-sm theme-text transition hover:bg-white/5 disabled:opacity-50"
+                                                            type="button"
+                                                            disabled={saving}
+                                                            onClick={() => {
+                                                                setPasswordResetUserId((current) => current === user.uuid ? null : user.uuid);
+                                                                setPasswordResetEmail('');
+                                                            }}
+                                                        >
+                                                            {t('Passwort-Reset')}
+                                                        </button>
+                                                    </div>
+                                                    <h3 className="theme-text text-sm font-semibold">{t('Minecraft-Konten')}</h3>
+                                                    {!userMinecraftAccounts.length && (
+                                                        <p className="theme-muted text-sm">{t('Keine Minecraft-Konten verknüpft.')}</p>
+                                                    )}
+                                                    {userMinecraftAccounts.map((account) => (
+                                                        <div key={account.player_uuid} className="theme-panel flex flex-wrap items-center justify-between gap-2 rounded-xl border p-3">
+                                                            <div className="min-w-0">
+                                                                <p className="theme-text text-sm font-semibold">{account.player_name}</p>
+                                                                <p className="theme-muted break-all font-mono text-xs">{account.player_uuid}</p>
+                                                            </div>
+                                                            <div className="flex gap-2">
+                                                                <button
+                                                                    className="rounded-lg border px-3 py-1 text-sm theme-text transition hover:bg-white/5 disabled:opacity-50"
+                                                                    type="button"
+                                                                    disabled={saving}
+                                                                    title={t('Aktuellen Namen von Mojang laden')}
+                                                                    onClick={() => handleMinecraftAction(
+                                                                        user.uuid,
+                                                                        () => requestJson(`/api/admin/users/${user.uuid}/minecraft/${encodeURIComponent(account.player_uuid)}`, { method: 'PUT' }),
+                                                                        t('Minecraft-Name aktualisiert.')
+                                                                    )}
+                                                                >
+                                                                    {t('Name aktualisieren')}
+                                                                </button>
+                                                                <button
+                                                                    className="rounded-lg px-3 py-1 text-sm text-rose-300 transition hover:bg-white/5 disabled:opacity-50"
+                                                                    type="button"
+                                                                    disabled={saving}
+                                                                    onClick={() => {
+                                                                        if (!window.confirm(t('Minecraft-Konto "{name}" wirklich entfernen?', { name: account.player_name }))) return;
+                                                                        handleMinecraftAction(
+                                                                            user.uuid,
+                                                                            () => requestJson(`/api/admin/users/${user.uuid}/minecraft/${encodeURIComponent(account.player_uuid)}`, { method: 'DELETE' }),
+                                                                            t('Minecraft-Konto entfernt.')
+                                                                        );
+                                                                    }}
+                                                                >
+                                                                    {t('Entfernen')}
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                    <form
+                                                        className="flex gap-2"
+                                                        onSubmit={(event) => {
+                                                            event.preventDefault();
+                                                            handleMinecraftAction(
+                                                                user.uuid,
+                                                                () => requestJson(`/api/admin/users/${user.uuid}/minecraft`, {
+                                                                    method: 'POST',
+                                                                    body: JSON.stringify({ playerName: newMinecraftName.trim() })
+                                                                }),
+                                                                t('Minecraft-Konto hinzugefügt.')
+                                                            );
+                                                        }}
+                                                    >
+                                                        <input
+                                                            className="theme-input w-full max-w-xs rounded-lg border px-3 py-2 text-sm"
+                                                            value={newMinecraftName}
+                                                            onChange={(event) => setNewMinecraftName(event.target.value)}
+                                                            maxLength={16}
+                                                            placeholder={t('Minecraft-Name')}
+                                                            aria-label={t('Minecraft-Name')}
+                                                        />
+                                                        <button
+                                                            className="rounded-lg border px-3 py-2 text-sm theme-text transition hover:bg-white/5 disabled:opacity-50"
+                                                            disabled={saving || !newMinecraftName.trim()}
+                                                        >
+                                                            {t('Konto hinzufügen')}
+                                                        </button>
+                                                    </form>
+                                                    <h3 className="theme-text text-sm font-semibold">{t('Whitelist und Minecraft-Informationen')}</h3>
+                                                    <form
+                                                        className="flex flex-wrap items-center gap-2"
+                                                        onSubmit={(event) => {
+                                                            event.preventDefault();
+                                                            void perform(
+                                                                () => requestJson('/api/admin/whitelist/grant', {
+                                                                    method: 'POST',
+                                                                    body: JSON.stringify({ userId: user.uuid, serviceId: Number(grantServiceId), playerName: grantName.trim() })
+                                                                }),
+                                                                async () => {
+                                                                    setGrantName('');
+                                                                    await loadUserWhitelist(user.uuid);
+                                                                    await loadWhitelist();
+                                                                },
+                                                                t('Benutzer auf die Whitelist gesetzt.')
+                                                            );
+                                                        }}
+                                                    >
+                                                        <span className="theme-muted text-sm">{t('Admin edit')}:</span>
+                                                        <select
+                                                            className="theme-input rounded-lg border px-3 py-2 text-sm"
+                                                            value={grantServiceId}
+                                                            onChange={(event) => setGrantServiceId(event.target.value)}
+                                                            aria-label={t('Server')}
+                                                        >
+                                                            <option value="">{t('Server wählen')}</option>
+                                                            {services.map((service) => (
+                                                                <option key={service.id} value={service.id}>{t(service.name)}</option>
+                                                            ))}
+                                                        </select>
+                                                        <input
+                                                            className="theme-input rounded-lg border px-3 py-2 text-sm"
+                                                            list={`minecraft-accounts-${user.uuid}`}
+                                                            value={grantName}
+                                                            onChange={(event) => setGrantName(event.target.value)}
+                                                            maxLength={16}
+                                                            placeholder={t('Minecraft-Name')}
+                                                            aria-label={t('Minecraft-Name')}
+                                                        />
+                                                        <datalist id={`minecraft-accounts-${user.uuid}`}>
+                                                            {userMinecraftAccounts.map((account) => (
+                                                                <option key={account.player_uuid} value={account.player_name} />
+                                                            ))}
+                                                        </datalist>
+                                                        <button
+                                                            className="rounded-lg border px-3 py-2 text-sm theme-text transition hover:bg-white/5 disabled:opacity-50"
+                                                            disabled={saving || !grantServiceId || !grantName.trim()}
+                                                        >
+                                                            {t('Auf Whitelist setzen')}
+                                                        </button>
+                                                    </form>
+                                                    {!userWhitelistEntries.length && !userWhitelistHistory.length && (
+                                                        <p className="theme-muted text-sm">{t('Keine Whitelist-Anträge von diesem Benutzer.')}</p>
+                                                    )}
+                                                    {userWhitelistEntries.map((entry) => (
+                                                        <WhitelistEntryCard key={entry.id} entry={entry} saving={saving} showRequester={false} onAction={handleWhitelistAction} />
+                                                    ))}
+                                                    {userWhitelistHistory.length > 0 && (
+                                                        <ul className="theme-muted space-y-1 text-xs">
+                                                            {userWhitelistHistory.map((note) => (
+                                                                <li key={note.id}>
+                                                                    {new Date(note.logged_at).toLocaleString(language === 'de' ? 'de-DE' : 'en-GB')}: {t('Hat sich selbst von der Whitelist entfernt')}
+                                                                    {note.service_name ? ` · ${note.service_name}` : ''}
+                                                                    {note.player_name ? ` · ${note.player_name}` : ''}
+                                                                </li>
+                                                            ))}
+                                                        </ul>
+                                                    )}
+                                                </div>
+                                            )}
                                             {passwordResetUserId === user.uuid && (
                                                 <div className="mt-4 space-y-3 border-t border-[var(--theme-border)] pt-4">
                                                     <p className="theme-muted text-sm">
@@ -782,6 +1198,27 @@ export default function AdminPage({ auth }: AdminPageProps) {
                         </div>
                     )}
 
+                    {tab === 'whitelist' && (
+                        <div className="mt-6 space-y-4">
+                            <select
+                                className="theme-input rounded-lg border px-3 py-2 text-sm"
+                                value={whitelistFilter}
+                                onChange={(event) => setWhitelistFilter(event.target.value as WhitelistStatus | 'all')}
+                                aria-label={t('Whitelist-Filter')}
+                            >
+                                <option value="pending">{t('Offen')}</option>
+                                <option value="approved">{t('Freigegeben')}</option>
+                                <option value="rejected">{t('Abgelehnt')}</option>
+                                <option value="revoked">{t('Widerrufen')}</option>
+                                <option value="all">{t('Alle')}</option>
+                            </select>
+                            {whitelistEntries.map((entry) => (
+                                <WhitelistEntryCard key={entry.id} entry={entry} saving={saving} showRequester onAction={handleWhitelistAction} />
+                            ))}
+                            {!whitelistEntries.length && <p className="theme-muted rounded-xl border p-5">{t('Keine Whitelist-Anträge.')}</p>}
+                        </div>
+                    )}
+
                     {tab === 'services' && (
                         <div className="mt-6 space-y-4">
                             {showServiceInfo && (
@@ -794,9 +1231,15 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                     </div>
                                     <div>
                                         <p className="theme-muted text-sm">{t('Sende alle 30 Sekunden per HTTPS einen')} <code className="font-mono">PUT /api/services/status</code> <span>{t('mit')}</span> <code className="font-mono">Authorization: Bearer &lt;SCHLÜSSEL&gt;</code>:</p>
-                                        <pre className="theme-input mt-2 overflow-x-auto rounded-lg border p-3 text-xs"><code>{language === 'de'
-                                            ? '{ "status": "online", "details": "Server läuft" }'
-                                            : '{ "status": "online", "details": "Server is running" }'}</code></pre>
+                                        <pre className="theme-input mt-2 overflow-x-auto rounded-lg border p-3 text-xs"><code>{JSON.stringify({
+                                            status: 'online',
+                                            details: language === 'de' ? 'Server läuft' : 'Server is running',
+                                            players: { online: 3, max: 20 },
+                                            minecraftVersion: '1.21.4'
+                                        }, null, 2)}</code></pre>
+                                        <p className="theme-muted mt-2 text-xs">
+                                            {t('status: online, offline oder maintenance. players und minecraftVersion sind optional; ältere Heartbeats ohne diese Felder funktionieren weiterhin.')}
+                                        </p>
                                     </div>
                                 </article>
                             )}
@@ -847,6 +1290,14 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                         />
                                         {t('Manueller Status-Override')}
                                     </label>
+                                    <label className="theme-muted flex items-center gap-2 text-sm sm:col-span-2">
+                                        <input
+                                            type="checkbox"
+                                            checked={newService.whitelistRequired}
+                                            onChange={(event) => setNewService((current) => ({ ...current, whitelistRequired: event.target.checked }))}
+                                        />
+                                        {t('Whitelist erforderlich')}
+                                    </label>
                                     <button
                                         className="w-fit rounded-lg bg-sky-300 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50 sm:col-span-2"
                                         type="submit"
@@ -888,6 +1339,15 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                             onChange={(event) => setServices((items) => items.map((item) => item.id === service.id ? { ...item, manualOverride: event.target.checked } : item))}
                                         />
                                         {t('Manueller Status-Override')}
+                                    </label>
+                                    <label className="theme-muted flex items-center gap-2 text-sm sm:col-span-2">
+                                        <input
+                                            type="checkbox"
+                                            checked={service.whitelistRequired}
+                                            disabled={saving}
+                                            onChange={(event) => setServices((items) => items.map((item) => item.id === service.id ? { ...item, whitelistRequired: event.target.checked } : item))}
+                                        />
+                                        {t('Whitelist erforderlich')}
                                     </label>
                                     <div className="flex flex-wrap items-center gap-3 sm:col-span-2">
                                         <span className="theme-muted text-sm">
