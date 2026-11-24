@@ -257,6 +257,13 @@ async function refreshAdminMinecraftAccountAPIRoute(req: Request, res: Response)
         await executeTransaction([
             { sql: 'UPDATE user_minecraft_accounts SET player_name = ? WHERE user_uuid = ? AND player_uuid = ?', params: [profile.name, userId, playerUuid] },
             { sql: 'UPDATE service_whitelist_requests SET player_name = ? WHERE requested_by = ? AND player_uuid = ?', params: [profile.name, userId, playerUuid] },
+            {
+                sql: `UPDATE service_status s
+                      JOIN service_whitelist_players p ON p.service_id = s.id
+                      SET s.whitelist_revision = s.whitelist_revision + 1
+                      WHERE p.player_uuid = ? AND BINARY p.player_name <> ?`,
+                params: [playerUuid, profile.name]
+            },
             { sql: 'UPDATE service_whitelist_players SET player_name = ? WHERE player_uuid = ?', params: [profile.name, playerUuid] },
             auditStatement(res, admin.userId, 'admin.minecraft.name_refreshed', { playerUuid, playerName: profile.name }, 'user', userId)
         ]);

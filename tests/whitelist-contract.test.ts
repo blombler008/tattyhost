@@ -31,25 +31,40 @@ test('Minecraft UUIDs are canonicalized and invalid UUIDs are rejected', () => {
     assert.throws(() => canonicalizeMinecraftUuid('not-a-uuid'), /Ungültige Minecraft-UUID/);
 });
 
-test('whitelist snapshots preserve an empty list and deduplicate UUIDs', () => {
+test('whitelist snapshots preserve an empty list, deduplicate UUIDs and carry validated names', () => {
     assert.deepEqual(createWhitelistSnapshot(0, []), { revision: 0, players: [] });
     assert.deepEqual(
-        createWhitelistSnapshot('42', [uuid, uuid.toUpperCase(), 'fedcba98765432100123456789abcdef']),
+        createWhitelistSnapshot('42', [
+            { uuid, name: 'Alex_1' },
+            { uuid: uuid.toUpperCase(), name: 'Alex_1' },
+            { uuid: 'fedcba98765432100123456789abcdef', name: 'Z' }
+        ]),
         {
             revision: 42,
-            players: ['01234567-89ab-cdef-0123-456789abcdef', 'fedcba98-7654-3210-0123-456789abcdef']
+            players: [
+                { uuid: '01234567-89ab-cdef-0123-456789abcdef', name: 'Alex_1' },
+                { uuid: 'fedcba98-7654-3210-0123-456789abcdef', name: 'Z' }
+            ]
         }
     );
     assert.throws(() => createWhitelistSnapshot(-1, []), /Ungültige Whitelist-Version/);
+    assert.throws(() => createWhitelistSnapshot(1, [{ uuid, name: '' }]), /Ungültiger Minecraft-Name/);
+    assert.throws(() => createWhitelistSnapshot(1, [{ uuid, name: 'bad name' }]), /Ungültiger Minecraft-Name/);
+    assert.throws(() => createWhitelistSnapshot(1, [{ uuid, name: 'A'.repeat(17) }]), /Ungültiger Minecraft-Name/);
+    assert.throws(() => createWhitelistSnapshot(1, [{ uuid: 'nope', name: 'Alex' }]), /Ungültige Minecraft-UUID/);
+    assert.throws(
+        () => createWhitelistSnapshot(1, [{ uuid, name: 'Alex' }, { uuid, name: 'Other' }]),
+        /Widersprüchliche Namen/
+    );
 });
 
 test('ETag returns the exact snapshot for changes and an empty body for a matching validator', () => {
-    const snapshot = createWhitelistSnapshot(42, [uuid]);
+    const snapshot = createWhitelistSnapshot(42, [{ uuid, name: 'Alex' }]);
     const initial = createWhitelistHttpResult(7, snapshot, undefined);
     assert.deepEqual(initial, {
         status: 200,
         etag: '"service-7-revision-42"',
-        body: { revision: 42, players: [uuid] }
+        body: { revision: 42, players: [{ uuid, name: 'Alex' }] }
     });
 
     assert.deepEqual(
@@ -60,19 +75,24 @@ test('ETag returns the exact snapshot for changes and an empty body for a matchi
     assert.equal(createWhitelistHttpResult(8, snapshot, initial.etag).status, 200);
 });
 
-test('revision advances exactly when approval or revocation changes membership', () => {
+test('revision advances exactly when approval, revocation or a name change alters the snapshot', () => {
     const before = 42;
     const afterApproval = nextWhitelistRevision(before, true);
     const afterNoOp = nextWhitelistRevision(afterApproval, false);
     const afterRevocation = nextWhitelistRevision(afterNoOp, true);
+    const afterRename = nextWhitelistRevision(afterRevocation, true);
 
     assert.equal(afterApproval, 43);
     assert.equal(afterNoOp, 43);
     assert.equal(afterRevocation, 44);
+    assert.equal(afterRename, 45);
     assert.notEqual(
         createWhitelistHttpResult(7, createWhitelistSnapshot(before, []), undefined).etag,
-        createWhitelistHttpResult(7, createWhitelistSnapshot(afterApproval, [uuid]), undefined).etag
+        createWhitelistHttpResult(7, createWhitelistSnapshot(afterApproval, [{ uuid, name: 'Alex' }]), undefined).etag
     );
+    const renamed = createWhitelistHttpResult(7, createWhitelistSnapshot(afterRename, [{ uuid, name: 'Alex2' }]), '"service-7-revision-44"');
+    assert.equal(renamed.status, 200);
+    assert.deepEqual(renamed.body?.players, [{ uuid, name: 'Alex2' }]);
 });
 
 test('Minecraft profile resolution accepts the official profile UUID and rejects invalid or missing profiles', async () => {

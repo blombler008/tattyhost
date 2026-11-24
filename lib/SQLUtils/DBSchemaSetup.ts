@@ -274,6 +274,10 @@ export async function setupServiceStatusTable() {
     await execute('ALTER TABLE service_status ADD COLUMN IF NOT EXISTS players_online INT UNSIGNED NULL');
     await execute('ALTER TABLE service_status ADD COLUMN IF NOT EXISTS players_max INT UNSIGNED NULL');
     await execute('ALTER TABLE service_status ADD COLUMN IF NOT EXISTS minecraft_version VARCHAR(32) NULL');
+    // Format 2 liefert Spielernamen; einmalig die Revision erhöhen, damit Clients den neuen Snapshot laden.
+    await execute('ALTER TABLE service_status ADD COLUMN IF NOT EXISTS whitelist_format INT UNSIGNED NOT NULL DEFAULT 1');
+    await execute('UPDATE service_status SET whitelist_revision = whitelist_revision + 1, whitelist_format = 2 WHERE whitelist_format < 2');
+    await execute('ALTER TABLE service_status ALTER COLUMN whitelist_format SET DEFAULT 2');
 }
 
 export async function setupServiceWhitelistTables() {

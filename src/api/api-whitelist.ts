@@ -7,6 +7,7 @@ import { auditStatement, logApiFailure, logAuditCommitted, requireAdmin, require
 import {
     createWhitelistHttpResult,
     createWhitelistSnapshot,
+    isValidWhitelistPlayerName,
     canonicalizeMinecraftUuid,
     InvalidMinecraftNameError,
     MinecraftProfileNotFoundError,
@@ -54,13 +55,47 @@ function reportProfileError(res: Response, error: unknown): boolean {
     return false;
 }
 
+async function repairInvalidWhitelistNames(serviceId: number) {
+    const players = await query<{ player_uuid: string; player_name: string }>(
+        'SELECT player_uuid, player_name FROM service_whitelist_players WHERE service_id = ?',
+        [serviceId]
+    );
+    const invalid = players.filter((player) => !isValidWhitelistPlayerName(player.player_name));
+    if (!invalid.length) return;
+
+    const resolved = await Promise.all(invalid.map((player) => resolveMinecraftProfileByUuid(player.player_uuid)));
+    await withDatabaseTransaction(
+        resolved.map(() => 'UPDATE').concat('UPDATE'),
+        async (connection) => {
+            for (const profile of resolved) {
+                await connection.query(
+                    'UPDATE service_whitelist_players SET player_name = ? WHERE player_uuid = ?',
+                    [profile.name, profile.uuid]
+                );
+            }
+            await connection.query(
+                'UPDATE service_status SET whitelist_revision = whitelist_revision + 1 WHERE id = ?',
+                [serviceId]
+            );
+        }
+    );
+}
+
 async function getWhitelistAPIRoute(req: Request, res: Response) {
     const serviceAuth = await authenticateServiceApiKey(req, res);
     if (!serviceAuth) return;
 
     try {
-        const rows = await query<{ revision: number | string; player_uuid: string | null }>(
-            `SELECT s.whitelist_revision AS revision, p.player_uuid
+        try {
+            await repairInvalidWhitelistNames(serviceAuth.serviceId);
+        } catch (error) {
+            logApiFailure(res, 'api.whitelist.name_repair_failed', error);
+            sendFailure(res, 503, 'Minecraft-Namen der Whitelist konnten nicht aufgelöst werden');
+            return;
+        }
+
+        const rows = await query<{ revision: number | string; player_uuid: string | null; player_name: string | null }>(
+            `SELECT s.whitelist_revision AS revision, p.player_uuid, p.player_name
              FROM service_status s
              LEFT JOIN service_whitelist_players p ON p.service_id = s.id
              WHERE s.id = ?
@@ -74,7 +109,9 @@ async function getWhitelistAPIRoute(req: Request, res: Response) {
 
         const snapshot = createWhitelistSnapshot(
             rows[0].revision,
-            rows.flatMap((row) => row.player_uuid ? [row.player_uuid] : [])
+            rows.flatMap((row) => row.player_uuid && row.player_name
+                ? [{ uuid: row.player_uuid, name: row.player_name }]
+                : [])
         );
         const result = createWhitelistHttpResult(
             serviceAuth.serviceId,
@@ -398,11 +435,12 @@ async function reviewWhitelistRequestAPIRoute(req: Request, res: Response) {
 
                 let revision = Number(services[0].whitelist_revision);
                 if (action === 'approved' && currentProfile) {
-                    const existingPlayers = await connection.query<Array<{ player_uuid: string }>>(
-                        'SELECT player_uuid FROM service_whitelist_players WHERE service_id = ? AND player_uuid = ? FOR UPDATE',
+                    const existingPlayers = await connection.query<Array<{ player_uuid: string; player_name: string }>>(
+                        'SELECT player_uuid, player_name FROM service_whitelist_players WHERE service_id = ? AND player_uuid = ? FOR UPDATE',
                         [initial.service_id, request.player_uuid]
                     );
                     const membershipChanged = !existingPlayers[0];
+                    const nameChanged = !!existingPlayers[0] && existingPlayers[0].player_name !== currentProfile.name;
                     if (membershipChanged) {
                         await connection.query(
                             `INSERT INTO service_whitelist_players
@@ -410,15 +448,17 @@ async function reviewWhitelistRequestAPIRoute(req: Request, res: Response) {
                              VALUES (?, ?, ?, ?)`,
                             [initial.service_id, request.player_uuid, currentProfile.name, admin.userId]
                         );
-                        revision = nextWhitelistRevision(revision, true);
-                        await connection.query(
-                            'UPDATE service_status SET whitelist_revision = ? WHERE id = ?',
-                            [revision, initial.service_id]
-                        );
                     } else {
                         await connection.query(
                             'UPDATE service_whitelist_players SET player_name = ?, approved_by = ?, approved_at = CURRENT_TIMESTAMP WHERE service_id = ? AND player_uuid = ?',
                             [currentProfile.name, admin.userId, initial.service_id, request.player_uuid]
+                        );
+                    }
+                    if (membershipChanged || nameChanged) {
+                        revision = nextWhitelistRevision(revision, true);
+                        await connection.query(
+                            'UPDATE service_status SET whitelist_revision = ? WHERE id = ?',
+                            [revision, initial.service_id]
                         );
                     }
                 }
@@ -529,8 +569,8 @@ async function grantWhitelistAPIRoute(req: Request, res: Response) {
                 }
 
                 let revision = Number(services[0].whitelist_revision);
-                const players = await connection.query<Array<{ player_uuid: string }>>(
-                    'SELECT player_uuid FROM service_whitelist_players WHERE service_id = ? AND player_uuid = ? FOR UPDATE',
+                const players = await connection.query<Array<{ player_uuid: string; player_name: string }>>(
+                    'SELECT player_uuid, player_name FROM service_whitelist_players WHERE service_id = ? AND player_uuid = ? FOR UPDATE',
                     [serviceId, profile.uuid]
                 );
                 if (!players[0]) {
@@ -539,6 +579,14 @@ async function grantWhitelistAPIRoute(req: Request, res: Response) {
                          VALUES (?, ?, ?, ?)`,
                         [serviceId, profile.uuid, profile.name, admin.userId]
                     );
+                }
+                if (!players[0] || players[0].player_name !== profile.name) {
+                    if (players[0]) {
+                        await connection.query(
+                            'UPDATE service_whitelist_players SET player_name = ? WHERE service_id = ? AND player_uuid = ?',
+                            [profile.name, serviceId, profile.uuid]
+                        );
+                    }
                     revision = nextWhitelistRevision(revision, true);
                     await connection.query('UPDATE service_status SET whitelist_revision = ? WHERE id = ?', [revision, serviceId]);
                 }

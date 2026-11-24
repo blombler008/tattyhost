@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 
 const MINECRAFT_NAME_PATTERN = /^[A-Za-z0-9_]{3,16}$/;
+const WHITELIST_NAME_PATTERN = /^[A-Za-z0-9_]{1,16}$/;
 const UUID_PATTERN = /^[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}$/;
 const COMPACT_UUID_PATTERN = /^[a-fA-F0-9]{32}$/;
 
@@ -9,9 +10,14 @@ export type MinecraftProfile = {
     name: string;
 };
 
+export type WhitelistPlayer = {
+    uuid: string;
+    name: string;
+};
+
 export type WhitelistSnapshot = {
     revision: number;
-    players: string[];
+    players: WhitelistPlayer[];
 };
 
 export type WhitelistHttpResult =
@@ -70,11 +76,26 @@ export function createWhitelistHttpResult(
     return { status: 200, etag, body: snapshot };
 }
 
-export function createWhitelistSnapshot(revisionValue: number | string, playerValues: string[]): WhitelistSnapshot {
+export function isValidWhitelistPlayerName(value: unknown): value is string {
+    return typeof value === 'string' && WHITELIST_NAME_PATTERN.test(value);
+}
+
+export function createWhitelistSnapshot(
+    revisionValue: number | string,
+    playerValues: Array<{ uuid: string; name: string }>
+): WhitelistSnapshot {
     const revision = Number(revisionValue);
     if (!Number.isSafeInteger(revision) || revision < 0) throw new Error('Ungültige Whitelist-Version');
 
-    const players = [...new Set(playerValues.map(canonicalizeMinecraftUuid))].sort();
+    const byUuid = new Map<string, WhitelistPlayer>();
+    for (const player of playerValues) {
+        if (!isValidWhitelistPlayerName(player.name)) throw new Error('Ungültiger Minecraft-Name in der Whitelist');
+        const uuid = canonicalizeMinecraftUuid(player.uuid);
+        const existing = byUuid.get(uuid);
+        if (existing && existing.name !== player.name) throw new Error('Widersprüchliche Namen für dieselbe UUID');
+        byUuid.set(uuid, { uuid, name: player.name });
+    }
+    const players = [...byUuid.values()].sort((a, b) => a.uuid.localeCompare(b.uuid));
     return { revision, players };
 }
 
