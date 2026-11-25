@@ -14,6 +14,17 @@ type OwnWhitelistRequest = {
 type MinecraftAccount = {
     player_uuid: string;
     player_name: string;
+    verified: boolean;
+};
+
+type OwnPlayerStats = {
+    name: string;
+    online: boolean;
+    lastSeen: number;
+    playtimeTicks: number;
+    deaths: number;
+    mobKills: number;
+    playerKills: number;
 };
 
 const statusStyles: Record<OwnWhitelistRequest['status'], string> = {
@@ -108,6 +119,9 @@ export function MinecraftTab() {
     const [accounts, setAccounts] = useState<MinecraftAccount[] | null>(null);
     const [playerName, setPlayerName] = useState('');
     const [adding, setAdding] = useState(false);
+    const [linkCode, setLinkCode] = useState<{ uuid: string; code: string } | null>(null);
+    const [stats, setStats] = useState<Record<string, OwnPlayerStats>>({});
+    const [statsUnavailable, setStatsUnavailable] = useState<Record<string, boolean>>({});
 
     const load = useCallback(async () => {
         try {
@@ -162,6 +176,45 @@ export function MinecraftTab() {
         }
     };
 
+    const createCode = async (account: MinecraftAccount) => {
+        try {
+            const response = await fetch(`/api/account/minecraft/${encodeURIComponent(account.player_uuid)}/link-code`, {
+                method: 'POST', credentials: 'include'
+            });
+            const data = await response.json() as { success: boolean; code?: string; error?: string };
+            if (!response.ok || !data.success || !data.code) throw new Error(data.error);
+            setLinkCode({ uuid: account.player_uuid, code: data.code });
+        } catch (error) {
+            toast(error instanceof Error && error.message ? error.message : t('Code konnte nicht erstellt werden'), 'error');
+        }
+    };
+
+    const loadStats = useCallback(async (account: MinecraftAccount) => {
+        try {
+            const response = await fetch(`/api/account/minecraft/${encodeURIComponent(account.player_uuid)}/stats`, { credentials: 'include' });
+            const data = await response.json() as { success: boolean; player?: OwnPlayerStats; error?: string };
+            if (response.status === 404) {
+                setStatsUnavailable((current) => ({ ...current, [account.player_uuid]: true }));
+                return;
+            }
+            if (!response.ok || !data.success || !data.player) throw new Error(data.error);
+            const player = data.player;
+            setStats((current) => ({ ...current, [account.player_uuid]: player }));
+            setStatsUnavailable((current) => ({ ...current, [account.player_uuid]: false }));
+        } catch (error) {
+            toast(error instanceof Error && error.message ? error.message : t('Statistiken konnten nicht geladen werden'), 'error');
+        }
+    }, [t, toast]);
+
+    useEffect(() => {
+        const verified = accounts?.filter((account) => account.verified) || [];
+        if (!verified.length) return;
+        const refresh = () => { for (const account of verified) void loadStats(account); };
+        refresh();
+        const timer = window.setInterval(refresh, 30_000);
+        return () => window.clearInterval(timer);
+    }, [accounts, loadStats]);
+
     return (
         <section className="rounded-2xl border p-5 theme-panel sm:p-7">
             <h2 className="text-xl font-semibold theme-text">{t('Minecraft-Konten')}</h2>
@@ -175,11 +228,32 @@ export function MinecraftTab() {
             ) : (
                 <ul className="mt-6 space-y-3">
                     {accounts.map((account) => (
-                        <li key={account.player_uuid} className="flex items-center justify-between gap-4 rounded-xl border p-4 theme-input">
+                        <li key={account.player_uuid} className="flex flex-wrap items-center justify-between gap-4 rounded-xl border p-4 theme-input">
                             <span className="min-w-0">
                                 <span className="block font-medium theme-text">{account.player_name}</span>
                                 <span className="block truncate font-mono text-xs theme-muted">{account.player_uuid}</span>
+                                <span className="block text-xs theme-muted">{t(account.verified ? 'Verifiziert' : 'Nicht verifiziert')}</span>
+                                {!account.verified && linkCode?.uuid === account.player_uuid && (
+                                    <span className="block text-sm theme-text">{t('Im Spiel innerhalb von 10 Minuten eingeben:')} <code>/link {linkCode.code}</code></span>
+                                )}
+                                {stats[account.player_uuid] && (
+                                    <span className="block text-sm theme-text">
+                                        <span className="rounded-full bg-sky-300/20 px-2 py-1 text-xs">{stats[account.player_uuid].online && Date.now() - stats[account.player_uuid].lastSeen <= 90_000 ? t('Jetzt online') : t('Offline')}</span>
+                                        {' · '}{t('Spielzeit')}: {Math.floor(stats[account.player_uuid].playtimeTicks / 72_000)} h {Math.floor(stats[account.player_uuid].playtimeTicks / 1_200) % 60} min
+                                        {' · '}{t('Zuletzt gesehen')}: {new Date(stats[account.player_uuid].lastSeen).toLocaleString()}
+                                        {' · '}{t('Tode')}: {stats[account.player_uuid].deaths}
+                                        {' · '}{t('Monster-Kills')}: {stats[account.player_uuid].mobKills}
+                                        {' · '}{t('Spieler-Kills')}: {stats[account.player_uuid].playerKills}
+                                    </span>
+                                )}
+                                {account.verified && statsUnavailable[account.player_uuid] && <span className="block text-sm theme-muted">{t('Noch keine Spielerstatistik vorhanden')}</span>}
                             </span>
+                            <button className="rounded-lg border px-3 py-2 text-sm theme-text" type="button" onClick={() => void (account.verified ? loadStats(account) : createCode(account))}>
+                                {t(account.verified ? 'Spielzeit anzeigen' : 'Im Spiel verifizieren')}
+                            </button>
+                            {!account.verified && linkCode?.uuid === account.player_uuid && (
+                                <button className="rounded-lg border px-3 py-2 text-sm theme-text" type="button" onClick={() => void load()}>{t('Verifizierung aktualisieren')}</button>
+                            )}
                             <button
                                 className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-rose-300 transition hover:bg-white/5"
                                 type="button"

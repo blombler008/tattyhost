@@ -15,7 +15,7 @@
     "preview": "cross-env NODE_ENV=production tsx ./server.ts",
     "lint": "eslint .",
     "test:whitelist": "node --import tsx --test tests/whitelist-contract.test.ts",
-    "test:services": "node --import tsx --test tests/service-status-contract.test.ts tests/whitelist-contract.test.ts"
+    "test:services": "node --import tsx --test tests/service-status-contract.test.ts tests/whitelist-contract.test.ts tests/thn-contract.test.ts"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.0.14",

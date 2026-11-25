@@ -11,12 +11,14 @@ import {
     hashServiceStatusApiKey,
     parseServiceStatusReport,
     resolveServiceApiKeyRecord,
+    ServiceRateLimiter,
     SERVICE_STATUS_HEARTBEAT_TIMEOUT_SECONDS,
     VALID_SERVICE_STATUSES
 } from './service-status-contract.ts';
 import { parseServiceApiBearer } from './whitelist-contract.ts';
 
 const SERVICE_STATUS_PUSH_INTERVAL_MS = 10_000;
+const serviceRateLimiter = new ServiceRateLimiter(120, 60_000);
 
 function isDatabaseBoolean(value: unknown): boolean {
     if (value === true || value === 1 || value === '1') return true;
@@ -43,13 +45,15 @@ let lastPushedServiceStatus = '';
 let serviceStatusPushErrorLogged = false;
 
 export async function authenticateServiceApiKey(req: Request, res: Response): Promise<{ serviceId: number; actorId: string | null } | null> {
+    const cached = res.locals.serviceApiAuth as { serviceId: number; actorId: string | null } | undefined;
+    if (cached) return cached;
     const authorization = req.get('authorization') || '';
     const apiKey = parseServiceApiBearer(authorization);
     if (!apiKey) {
         logEvent('warn', 'api.service_status.unauthorized', {
             requestId: typeof res.locals.requestId === 'string' ? res.locals.requestId : undefined
         });
-        sendFailure(res, 401, 'Ungültiger API-Schlüssel');
+        res.status(401).json({ error: 'Ungültiger API-Schlüssel' });
         return null;
     }
 
@@ -68,14 +72,20 @@ export async function authenticateServiceApiKey(req: Request, res: Response): Pr
             logEvent('warn', 'api.service_status.unauthorized', {
                 requestId: typeof res.locals.requestId === 'string' ? res.locals.requestId : undefined
             });
-            sendFailure(res, 401, 'Ungültiger API-Schlüssel');
+            res.status(401).json({ error: 'Ungültiger API-Schlüssel' });
             return null;
         }
 
+        if (!serviceRateLimiter.allow(serviceAuth.serviceId, Date.now())) {
+            res.setHeader('Retry-After', '60');
+            res.status(429).json({ error: 'Zu viele Anfragen' });
+            return null;
+        }
+        res.locals.serviceApiAuth = serviceAuth;
         return serviceAuth;
     } catch (error) {
         logApiFailure(res, 'api.service_status.authentication_failed', error);
-        sendServerFailure(res);
+        res.status(500).json({ error: 'Der Dienst ist derzeit nicht verfügbar' });
         return null;
     }
 }
@@ -112,10 +122,10 @@ async function markExpiredServiceStatuses() {
              details = '${HEARTBEAT_EXPIRED_DETAILS}',
              players_online = NULL,
              players_max = NULL,
-             minecraft_version = NULL,
-             last_reported_at = NULL
+             minecraft_version = NULL
          WHERE manual_override = FALSE
            AND last_reported_at IS NOT NULL
+           AND (status <> 'offline' OR details <> '${HEARTBEAT_EXPIRED_DETAILS}')
            AND last_reported_at < CURRENT_TIMESTAMP - INTERVAL ${SERVICE_STATUS_HEARTBEAT_TIMEOUT_SECONDS} SECOND`
     );
 }
@@ -197,10 +207,6 @@ async function serviceStatusEventsAPIRoute(_req: Request, res: Response) {
         res.on('close', () => {
             clearInterval(heartbeat);
             serviceStatusClients.delete(res);
-            if (serviceStatusClients.size === 0 && serviceStatusPushTimer) {
-                clearInterval(serviceStatusPushTimer);
-                serviceStatusPushTimer = undefined;
-            }
         });
         startServiceStatusPushTimer();
     } catch (error) {
@@ -213,9 +219,14 @@ async function updateServiceStatusFromServerAPIRoute(req: Request, res: Response
     const apiKeyAuth = await authenticateServiceApiKey(req, res);
     if (!apiKeyAuth) return;
 
+    if (!req.is('application/json')) {
+        res.status(415).json({ error: 'Content-Type muss application/json sein' });
+        return;
+    }
+
     const report = parseServiceStatusReport(req.body);
     if (!report) {
-        sendFailure(res, 400, 'Ungültige Serverstatus-Angaben');
+        res.status(400).json({ error: 'Ungültige Serverstatus-Angaben' });
         return;
     }
 
@@ -255,8 +266,9 @@ async function updateServiceStatusFromServerAPIRoute(req: Request, res: Response
                 );
                 if (manualOverride) {
                     await connection.query(
-                        'UPDATE service_status SET last_reported_at = CURRENT_TIMESTAMP WHERE id = ?',
-                        [service.id]
+                        `UPDATE service_status SET last_reported_at = CURRENT_TIMESTAMP,
+                         plugin_api_port = ? WHERE id = ?`,
+                        [report.api?.port ?? null, service.id]
                     );
                     return {
                         result: 'updated' as const,
@@ -269,7 +281,8 @@ async function updateServiceStatusFromServerAPIRoute(req: Request, res: Response
                 await connection.query(
                     `UPDATE service_status
                      SET status = ?, details = ?, players_online = ?, players_max = ?,
-                         minecraft_version = ?, updated_by = ?, last_reported_at = CURRENT_TIMESTAMP
+                         minecraft_version = ?, updated_by = ?, last_reported_at = CURRENT_TIMESTAMP,
+                         plugin_api_port = ?
                      WHERE id = ?`,
                     [
                         heartbeat.status,
@@ -278,6 +291,7 @@ async function updateServiceStatusFromServerAPIRoute(req: Request, res: Response
                         heartbeat.playersMax,
                         heartbeat.minecraftVersion,
                         apiKeyAuth.actorId,
+                        report.api?.port ?? null,
                         service.id
                     ]
                 );
@@ -308,7 +322,7 @@ async function updateServiceStatusFromServerAPIRoute(req: Request, res: Response
         );
 
         if (outcome.result === 'missing') {
-            sendFailure(res, 404, 'Service nicht gefunden');
+            res.status(404).json({ error: 'Service nicht gefunden' });
             return;
         }
 
@@ -328,10 +342,10 @@ async function updateServiceStatusFromServerAPIRoute(req: Request, res: Response
                 }
             );
         }
-        sendSuccess(res, { updated: true });
+        res.status(204).end();
     } catch (error) {
         logApiFailure(res, 'api.service_status.update_failed', error);
-        sendServerFailure(res);
+        res.status(500).json({ error: 'Der Dienst ist derzeit nicht verfügbar' });
     }
 }
 
@@ -350,8 +364,13 @@ async function getAdminServicesAPIRoute(_req: Request, res: Response) {
             whitelist_required: unknown;
             api_key_configured: unknown;
             api_key_created_at: Date | null;
+            last_reported_at: Date | null;
+            players_online: number | null;
+            players_max: number | null;
+            minecraft_version: string | null;
         }>(`
             SELECT s.id, s.name, s.address, s.status, s.details, s.manual_override, s.whitelist_required,
+                   s.last_reported_at, s.players_online, s.players_max, s.minecraft_version,
                    k.service_id IS NOT NULL AS api_key_configured,
                    k.created_at AS api_key_created_at
             FROM service_status s
@@ -368,7 +387,11 @@ async function getAdminServicesAPIRoute(_req: Request, res: Response) {
                 manualOverride: isDatabaseBoolean(service.manual_override),
                 whitelistRequired: isDatabaseBoolean(service.whitelist_required),
                 apiKeyConfigured: isDatabaseBoolean(service.api_key_configured),
-                apiKeyCreatedAt: service.api_key_created_at
+                apiKeyCreatedAt: service.api_key_created_at,
+                lastReportedAt: service.last_reported_at,
+                playersOnline: service.players_online,
+                playersMax: service.players_max,
+                minecraftVersion: service.minecraft_version
             }))
         });
     } catch (error) {
@@ -605,6 +628,7 @@ async function deleteServiceAPIRoute(req: Request, res: Response) {
 export function createServicesRouter(): Router {
     const router = Router();
     const servicesRouter = Router();
+    startServiceStatusPushTimer();
     servicesRouter.get('/', getServicesAPIRoute);
     servicesRouter.get('/events', serviceStatusEventsAPIRoute);
     servicesRouter.put('/status', updateServiceStatusFromServerAPIRoute);

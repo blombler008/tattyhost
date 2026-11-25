@@ -19,6 +19,7 @@ import userRoleIcon from '../assets/material-icons/user-outline.svg';
 import supporterRoleIcon from '../assets/material-icons/headset.svg';
 import moderatorRoleIcon from '../assets/material-icons/chat-bubbles.svg';
 import adminRoleIcon from '../assets/basics/shield.svg';
+import ThnAdminPanel from '../components/ThnAdminPanel';
 
 type Overview = {
     users: number;
@@ -65,6 +66,10 @@ type Service = {
     whitelistRequired: boolean;
     apiKeyConfigured: boolean;
     apiKeyCreatedAt: string | null;
+    lastReportedAt: string | null;
+    playersOnline: number | null;
+    playersMax: number | null;
+    minecraftVersion: string | null;
 };
 
 type WhitelistStatus = 'pending' | 'approved' | 'rejected' | 'revoked';
@@ -204,7 +209,7 @@ type AdminPageProps = {
 export default function AdminPage({ auth }: AdminPageProps) {
     const { language, t } = useI18n();
     const { toast } = useToast();
-    const [tab, setTab] = useState<'overview' | 'users' | 'files' | 'downloads' | 'services' | 'whitelist'>('overview');
+    const [tab, setTab] = useState<'overview' | 'users' | 'files' | 'downloads' | 'services' | 'whitelist' | 'thn'>('overview');
     const [whitelistFilter, setWhitelistFilter] = useState<WhitelistStatus | 'all'>('pending');
     const [whitelistEntries, setWhitelistEntries] = useState<WhitelistEntry[]>([]);
     const [infoUserId, setInfoUserId] = useState<string | null>(null);
@@ -585,6 +590,16 @@ export default function AdminPage({ auth }: AdminPageProps) {
                     method: 'POST',
                     body: JSON.stringify(newService)
                 });
+                setServices((current) => [...current, {
+                    ...newService,
+                    id: data.serviceId,
+                    apiKeyConfigured: true,
+                    apiKeyCreatedAt: null,
+                    lastReportedAt: null,
+                    playersOnline: null,
+                    playersMax: null,
+                    minecraftVersion: null
+                }]);
                 setNewService({
                     name: '',
                     address: '',
@@ -594,8 +609,13 @@ export default function AdminPage({ auth }: AdminPageProps) {
                     whitelistRequired: false
                 });
                 setRevealedServiceApiKeys((current) => ({ ...current, [data.serviceId]: data.apiKey }));
-                await loadServices();
-                toast('Service erstellt. Der API-Schlüssel wird nur jetzt angezeigt; kopiere ihn in die Serverkonfiguration.', 'success');
+                try {
+                    await loadServices();
+                } catch {
+                    toast(t('Service wurde erstellt, aber die Serverliste konnte nicht aktualisiert werden.'), 'error');
+                    return;
+                }
+                toast(t('Service erstellt. Kopiere den einmalig angezeigten API-Schlüssel in die Serverkonfiguration.'), 'success');
             } catch (actionError) {
                 toast(actionError instanceof Error ? actionError.message : 'Service konnte nicht erstellt werden', 'error');
             } finally {
@@ -622,15 +642,21 @@ export default function AdminPage({ auth }: AdminPageProps) {
 
     const rotateServiceApiKey = async (service: Service) => {
         if (service.apiKeyConfigured &&
-            !window.confirm(t('Der bisherige Schlüssel für "{name}" wird sofort ungültig. Wirklich neu erstellen?', { name: service.name }))) return;
+            !window.confirm(t('Der bisherige Schlüssel wird sofort ungültig. Den Schlüssel wirklich neu erstellen?'))) return;
         setSaving(true);
         try {
             const data = await requestJson<{ apiKey: string }>(`/api/admin/services/${service.id}/api-key`, { method: 'POST' });
             setRevealedServiceApiKeys((current) => ({ ...current, [service.id]: data.apiKey }));
-            await loadServices();
-            toast('API-Schlüssel wird nur einmal angezeigt. Kopiere ihn direkt in die Konfiguration dieses Services.', 'success');
+            setServices((current) => current.map((item) => item.id === service.id ? { ...item, apiKeyConfigured: true } : item));
+            try {
+                await loadServices();
+            } catch {
+                toast(t('Der Schlüssel wurde erstellt, aber die Serverliste konnte nicht aktualisiert werden.'), 'error');
+                return;
+            }
+            toast(t('Kopiere den einmalig angezeigten API-Schlüssel in die Serverkonfiguration.'), 'success');
         } catch (actionError) {
-            toast(actionError instanceof Error ? actionError.message : 'API-Schlüssel konnte nicht erstellt werden', 'error');
+            toast(actionError instanceof Error ? actionError.message : t('API-Schlüssel konnte nicht erstellt werden'), 'error');
         } finally {
             setSaving(false);
         }
@@ -641,9 +667,9 @@ export default function AdminPage({ auth }: AdminPageProps) {
         if (!apiKey) return;
         try {
             await navigator.clipboard.writeText(apiKey);
-            toast('API-Schlüssel in die Zwischenablage kopiert.', 'success');
+            toast(t('API-Schlüssel in die Zwischenablage kopiert.'), 'success');
         } catch (copyError) {
-            toast(copyError instanceof Error ? copyError.message : 'Kopieren in die Zwischenablage ist fehlgeschlagen', 'error');
+            toast(copyError instanceof Error ? copyError.message : t('Kopieren in die Zwischenablage ist fehlgeschlagen'), 'error');
         }
     };
 
@@ -653,6 +679,7 @@ export default function AdminPage({ auth }: AdminPageProps) {
         { id: 'files', label: t('Dateien'), icon: filesTabIcon },
         { id: 'downloads', label: 'Downloads', icon: downloadsTabIcon },
         { id: 'services', label: t('Serverstatus'), icon: servicesTabIcon },
+        { id: 'thn', label: 'THNLink', icon: servicesTabIcon },
         { id: 'whitelist', label: 'Whitelist', icon: whitelistIcon }
     ] as const;
 
@@ -685,6 +712,7 @@ export default function AdminPage({ auth }: AdminPageProps) {
                 ))}
             </div>
 
+            {tab === 'thn' && <ThnAdminPanel services={services} />}
             {tab === 'services' && (
                 <div className="mt-3 flex justify-end gap-2">
                     <button
@@ -1226,7 +1254,7 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                     <div>
                                         <h2 className="theme-text font-semibold">{t('Service-Statusmeldungen')}</h2>
                                         <p className="theme-muted mt-2 text-sm">
-                                            {t('Jeder Service verwendet einen eigenen API-Schlüssel. Schlüssel werden nur einmal angezeigt und in der Datenbank ausschließlich als SHA-256-Hash gespeichert. Ohne manuelle Überschreibung wird ein Service nach 60 Sekunden ohne Heartbeat einmalig auf offline gesetzt.')}
+                                            {t('Jeder Service verwendet einen eigenen API-Schlüssel. Schlüssel werden nur einmal angezeigt und in der Datenbank ausschließlich als SHA-256-Hash gespeichert. Ohne manuelle Überschreibung wird ein Service nach 90 Sekunden ohne Heartbeat einmalig auf offline gesetzt.')}
                                         </p>
                                     </div>
                                     <div>
@@ -1382,7 +1410,7 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                     {revealedServiceApiKeys[service.id] && (
                                         <div className="space-y-2 sm:col-span-2">
                                             <label className="theme-muted block text-sm" htmlFor={`service-api-key-${service.id}`}>
-                                                {t('API-Schlüssel für {service} (nur einmal sichtbar)', { service: service.name })}
+                                                {t('API-Schlüssel (nur einmal sichtbar)')}
                                             </label>
                                             <input
                                                 id={`service-api-key-${service.id}`}

@@ -4,6 +4,8 @@ const MINECRAFT_NAME_PATTERN = /^[A-Za-z0-9_]{3,16}$/;
 const WHITELIST_NAME_PATTERN = /^[A-Za-z0-9_]{1,16}$/;
 const UUID_PATTERN = /^[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}$/;
 const COMPACT_UUID_PATTERN = /^[a-fA-F0-9]{32}$/;
+export const MAX_WHITELIST_PLAYERS = 10_000;
+export const MAX_WHITELIST_BYTES = 1_048_576;
 
 export type MinecraftProfile = {
     uuid: string;
@@ -96,7 +98,11 @@ export function createWhitelistSnapshot(
         byUuid.set(uuid, { uuid, name: player.name });
     }
     const players = [...byUuid.values()].sort((a, b) => a.uuid.localeCompare(b.uuid));
-    return { revision, players };
+    const snapshot = { revision, players };
+    if (players.length > MAX_WHITELIST_PLAYERS || Buffer.byteLength(JSON.stringify(snapshot), 'utf8') > MAX_WHITELIST_BYTES) {
+        throw new Error('Whitelist überschreitet die zulässige Größe');
+    }
+    return snapshot;
 }
 
 export function nextWhitelistRevision(current: number, membershipChanged: boolean): number {

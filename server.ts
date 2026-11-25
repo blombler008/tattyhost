@@ -4,6 +4,7 @@ import express, { type Request, type Response, type ErrorRequestHandler } from '
 import cookieParser from 'cookie-parser';
 
 import ApiRouter from './src/api/api-routes.ts';
+import { authenticateServiceApiKey } from './src/api/api-services.ts';
 import { checkAuthMiddleware } from './src/middleware/check-auth.ts';
 import { setupAllTables } from './lib/SQLUtils/DBSchemaSetup.ts';
 import { closeDatabasePool, getDatabasePoolStats } from './lib/SQLUtils/SQLUtils.ts';
@@ -74,6 +75,12 @@ try {
 }
 
 app.use(requestLoggingMiddleware);
+for (const path of ['/api/services/status', '/api/services/whitelist', '/api/services/players/stats', '/api/services/players/link']) {
+    app.use(path, async (req, res, next) => {
+        if (await authenticateServiceApiKey(req, res)) next();
+    });
+}
+app.use('/api/services/players/stats', express.json({ limit: '8mb' }));
 app.use(express.json());
 app.use(cookieParser());
 app.use(checkAuthMiddleware); // Middleware to check auth status
@@ -144,7 +151,9 @@ const errorHandler: ErrorRequestHandler = (error, req, res, next) => {
         details: { error }
     });
 
-    if (req.path.startsWith('/api/')) {
+    if (req.path.startsWith('/api/services/')) {
+        res.status(statusCode).json({ error: 'Anfrage konnte nicht verarbeitet werden' });
+    } else if (req.path.startsWith('/api/')) {
         res.status(statusCode).json({ success: false, error: 'Anfrage konnte nicht verarbeitet werden' });
     } else {
         res.status(statusCode).send('Anfrage konnte nicht verarbeitet werden');

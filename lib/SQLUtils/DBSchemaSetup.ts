@@ -274,6 +274,8 @@ export async function setupServiceStatusTable() {
     await execute('ALTER TABLE service_status ADD COLUMN IF NOT EXISTS players_online INT UNSIGNED NULL');
     await execute('ALTER TABLE service_status ADD COLUMN IF NOT EXISTS players_max INT UNSIGNED NULL');
     await execute('ALTER TABLE service_status ADD COLUMN IF NOT EXISTS minecraft_version VARCHAR(32) NULL');
+    await execute('ALTER TABLE service_status ADD COLUMN IF NOT EXISTS plugin_api_port SMALLINT UNSIGNED NULL');
+    await execute('ALTER TABLE service_status ADD COLUMN IF NOT EXISTS plugin_api_host_override VARCHAR(45) NULL');
     // Format 2 liefert Spielernamen; einmalig die Revision erhöhen, damit Clients den neuen Snapshot laden.
     await execute('ALTER TABLE service_status ADD COLUMN IF NOT EXISTS whitelist_format INT UNSIGNED NOT NULL DEFAULT 1');
     await execute('UPDATE service_status SET whitelist_revision = whitelist_revision + 1, whitelist_format = 2 WHERE whitelist_format < 2');
@@ -339,6 +341,46 @@ export async function setupServiceStatusServiceApiKeysTable() {
     `);
 }
 
+export async function setupThnPlayerTables() {
+    await execute(`
+        CREATE TABLE IF NOT EXISTS verified_minecraft_links (
+            player_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
+            user_uuid CHAR(36) NOT NULL,
+            verified_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_uuid, player_uuid)
+                REFERENCES user_minecraft_accounts(user_uuid, player_uuid) ON DELETE CASCADE
+        )
+    `);
+    await execute(`
+        CREATE TABLE IF NOT EXISTS minecraft_link_codes (
+            user_uuid CHAR(36) NOT NULL,
+            player_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            code_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            expires_at DATETIME NOT NULL,
+            PRIMARY KEY (user_uuid, player_uuid),
+            INDEX idx_link_code (player_uuid, code_hash),
+            FOREIGN KEY (user_uuid, player_uuid)
+                REFERENCES user_minecraft_accounts(user_uuid, player_uuid) ON DELETE CASCADE
+        )
+    `);
+    await execute(`
+        CREATE TABLE IF NOT EXISTS minecraft_link_attempts (
+            player_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
+            attempts INT UNSIGNED NOT NULL,
+            window_started DATETIME NOT NULL
+        )
+    `);
+    await execute(`
+        CREATE TABLE IF NOT EXISTS minecraft_player_stats (
+            player_uuid CHAR(36) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
+            service_id INT NULL,
+            last_seen BIGINT UNSIGNED NOT NULL,
+            stats_json MEDIUMTEXT NOT NULL,
+            FOREIGN KEY (service_id) REFERENCES service_status(id) ON DELETE SET NULL
+        )
+    `);
+}
+
 export async function setupAllTables() {
     await setupUsersTable();
     await setupSessionsTable();
@@ -359,4 +401,5 @@ export async function setupAllTables() {
     await setupServiceStatusTable();
     await setupServiceStatusServiceApiKeysTable();
     await setupServiceWhitelistTables();
+    await setupThnPlayerTables();
 }

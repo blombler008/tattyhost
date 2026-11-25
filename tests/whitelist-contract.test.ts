@@ -58,6 +58,17 @@ test('whitelist snapshots preserve an empty list, deduplicate UUIDs and carry va
     );
 });
 
+test('whitelist snapshots enforce the player and byte limits', () => {
+    const players = Array.from({ length: 10_001 }, (_, index) => ({
+        uuid: index.toString(16).padStart(32, '0'),
+        name: 'A'.repeat(16)
+    }));
+    const snapshot = createWhitelistSnapshot(1, players.slice(0, 10_000));
+    assert.equal(snapshot.players.length, 10_000);
+    assert.ok(Buffer.byteLength(JSON.stringify(snapshot), 'utf8') <= 1_048_576);
+    assert.throws(() => createWhitelistSnapshot(1, players), /zulässige Größe/);
+});
+
 test('ETag returns the exact snapshot for changes and an empty body for a matching validator', () => {
     const snapshot = createWhitelistSnapshot(42, [{ uuid, name: 'Alex' }]);
     const initial = createWhitelistHttpResult(7, snapshot, undefined);

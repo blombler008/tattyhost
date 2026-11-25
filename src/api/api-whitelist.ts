@@ -8,6 +8,7 @@ import {
     createWhitelistHttpResult,
     createWhitelistSnapshot,
     isValidWhitelistPlayerName,
+    MAX_WHITELIST_PLAYERS,
     canonicalizeMinecraftUuid,
     InvalidMinecraftNameError,
     MinecraftProfileNotFoundError,
@@ -63,20 +64,32 @@ async function repairInvalidWhitelistNames(serviceId: number) {
     const invalid = players.filter((player) => !isValidWhitelistPlayerName(player.player_name));
     if (!invalid.length) return;
 
-    const resolved = await Promise.all(invalid.map((player) => resolveMinecraftProfileByUuid(player.player_uuid)));
+    const resolved = await Promise.all(invalid.map(async (player) => ({
+        player,
+        profile: await resolveMinecraftProfileByUuid(player.player_uuid)
+    })));
     await withDatabaseTransaction(
-        resolved.map(() => 'UPDATE').concat('UPDATE'),
+        ['SELECT', ...resolved.map(() => 'UPDATE'), 'UPDATE'],
         async (connection) => {
-            for (const profile of resolved) {
+            const services = await connection.query<Array<{ id: number }>>(
+                'SELECT id FROM service_status WHERE id = ? FOR UPDATE', [serviceId]
+            );
+            if (!services[0]) return;
+            let changed = false;
+            for (const { player, profile } of resolved) {
+                const result = await connection.query<UpsertResult>(
+                    `UPDATE service_whitelist_players SET player_name = ?
+                     WHERE service_id = ? AND player_uuid = ? AND BINARY player_name = BINARY ?`,
+                    [profile.name, serviceId, player.player_uuid, player.player_name]
+                );
+                changed ||= result.affectedRows > 0;
+            }
+            if (changed) {
                 await connection.query(
-                    'UPDATE service_whitelist_players SET player_name = ? WHERE player_uuid = ?',
-                    [profile.name, profile.uuid]
+                    'UPDATE service_status SET whitelist_revision = whitelist_revision + 1 WHERE id = ?',
+                    [serviceId]
                 );
             }
-            await connection.query(
-                'UPDATE service_status SET whitelist_revision = whitelist_revision + 1 WHERE id = ?',
-                [serviceId]
-            );
         }
     );
 }
@@ -90,7 +103,7 @@ async function getWhitelistAPIRoute(req: Request, res: Response) {
             await repairInvalidWhitelistNames(serviceAuth.serviceId);
         } catch (error) {
             logApiFailure(res, 'api.whitelist.name_repair_failed', error);
-            sendFailure(res, 503, 'Minecraft-Namen der Whitelist konnten nicht aufgelöst werden');
+            res.status(503).json({ error: 'Minecraft-Namen der Whitelist konnten nicht aufgelöst werden' });
             return;
         }
 
@@ -103,13 +116,13 @@ async function getWhitelistAPIRoute(req: Request, res: Response) {
             [serviceAuth.serviceId]
         );
         if (!rows.length) {
-            sendFailure(res, 404, 'Service nicht gefunden');
+            res.status(404).json({ error: 'Service nicht gefunden' });
             return;
         }
 
         const snapshot = createWhitelistSnapshot(
             rows[0].revision,
-            rows.flatMap((row) => row.player_uuid && row.player_name
+            rows.flatMap((row) => row.player_uuid !== null && row.player_name !== null
                 ? [{ uuid: row.player_uuid, name: row.player_name }]
                 : [])
         );
@@ -129,7 +142,7 @@ async function getWhitelistAPIRoute(req: Request, res: Response) {
         res.status(200).json(result.body);
     } catch (error) {
         logApiFailure(res, 'api.whitelist.load_failed', error);
-        sendServerFailure(res);
+        res.status(500).json({ error: 'Der Dienst ist derzeit nicht verfügbar' });
     }
 }
 
@@ -442,6 +455,13 @@ async function reviewWhitelistRequestAPIRoute(req: Request, res: Response) {
                     const membershipChanged = !existingPlayers[0];
                     const nameChanged = !!existingPlayers[0] && existingPlayers[0].player_name !== currentProfile.name;
                     if (membershipChanged) {
+                        const counts = await connection.query<Array<{ total: number | string }>>(
+                            'SELECT COUNT(*) AS total FROM service_whitelist_players WHERE service_id = ? FOR UPDATE',
+                            [initial.service_id]
+                        );
+                        if (Number(counts[0].total) >= MAX_WHITELIST_PLAYERS) {
+                            return { result: 'full' as const, revision: 0 };
+                        }
                         await connection.query(
                             `INSERT INTO service_whitelist_players
                                 (service_id, player_uuid, player_name, approved_by)
@@ -486,6 +506,10 @@ async function reviewWhitelistRequestAPIRoute(req: Request, res: Response) {
         }
         if (outcome.result === 'not_pending') {
             sendFailure(res, 409, 'Dieser Antrag wurde bereits bearbeitet');
+            return;
+        }
+        if (outcome.result === 'full') {
+            sendFailure(res, 409, 'Die Whitelist ist voll');
             return;
         }
 
@@ -551,6 +575,19 @@ async function grantWhitelistAPIRoute(req: Request, res: Response) {
                     return { result: 'duplicate' as const, revision: 0 };
                 }
 
+                const players = await connection.query<Array<{ player_uuid: string; player_name: string }>>(
+                    'SELECT player_uuid, player_name FROM service_whitelist_players WHERE service_id = ? AND player_uuid = ? FOR UPDATE',
+                    [serviceId, profile.uuid]
+                );
+                if (!players[0]) {
+                    const counts = await connection.query<Array<{ total: number | string }>>(
+                        'SELECT COUNT(*) AS total FROM service_whitelist_players WHERE service_id = ? FOR UPDATE', [serviceId]
+                    );
+                    if (Number(counts[0].total) >= MAX_WHITELIST_PLAYERS) {
+                        return { result: 'full' as const, revision: 0 };
+                    }
+                }
+
                 const reason = `Admin edit: ${admins[0]?.username ?? admin.userId}`.slice(0, MAX_WHITELIST_REASON_LENGTH);
                 if (existing) {
                     await connection.query(
@@ -569,10 +606,6 @@ async function grantWhitelistAPIRoute(req: Request, res: Response) {
                 }
 
                 let revision = Number(services[0].whitelist_revision);
-                const players = await connection.query<Array<{ player_uuid: string; player_name: string }>>(
-                    'SELECT player_uuid, player_name FROM service_whitelist_players WHERE service_id = ? AND player_uuid = ? FOR UPDATE',
-                    [serviceId, profile.uuid]
-                );
                 if (!players[0]) {
                     await connection.query(
                         `INSERT INTO service_whitelist_players (service_id, player_uuid, player_name, approved_by)
@@ -610,6 +643,10 @@ async function grantWhitelistAPIRoute(req: Request, res: Response) {
         }
         if (outcome.result === 'duplicate') {
             sendFailure(res, 409, 'Für dieses Minecraft-Profil existiert bereits eine Freigabe oder ein Antrag eines anderen Benutzers');
+            return;
+        }
+        if (outcome.result === 'full') {
+            sendFailure(res, 409, 'Die Whitelist ist voll');
             return;
         }
 

@@ -2,8 +2,8 @@ import { createHash } from 'node:crypto';
 import { verifyServiceApiKey } from './whitelist-contract.ts';
 
 export const VALID_SERVICE_STATUSES = ['online', 'offline', 'maintenance'] as const;
-export const SERVICE_STATUS_HEARTBEAT_TIMEOUT_SECONDS = 60;
-export const HEARTBEAT_EXPIRED_DETAILS = 'Keine Statusmeldung seit über 60 Sekunden';
+export const SERVICE_STATUS_HEARTBEAT_TIMEOUT_SECONDS = 90;
+export const HEARTBEAT_EXPIRED_DETAILS = 'Keine Statusmeldung seit über 90 Sekunden';
 
 export type ServiceStatus = typeof VALID_SERVICE_STATUSES[number];
 
@@ -15,6 +15,10 @@ export type ServiceStatusReport = {
         max: number;
     };
     minecraftVersion?: string;
+    api?: {
+        port: number;
+        host?: string;
+    };
 };
 
 export type ServiceStatusState = {
@@ -35,6 +39,26 @@ export type ServiceHeartbeatResult = ServiceStatusState & {
 
 export const MAX_SERVICE_PLAYERS = 4_294_967_295;
 export const MAX_MINECRAFT_VERSION_LENGTH = 32;
+
+export class ServiceRateLimiter {
+    private readonly windows = new Map<number, { count: number; expiresAt: number }>();
+
+    constructor(private readonly limit: number, private readonly windowMs: number) {}
+
+    allow(serviceId: number, now: number): boolean {
+        for (const [id, window] of this.windows) {
+            if (now >= window.expiresAt) this.windows.delete(id);
+        }
+        const window = this.windows.get(serviceId);
+        if (!window) {
+            this.windows.set(serviceId, { count: 1, expiresAt: now + this.windowMs });
+            return true;
+        }
+        if (window.count >= this.limit) return false;
+        window.count++;
+        return true;
+    }
+}
 
 export function hashServiceStatusApiKey(apiKey: string): string {
     return createHash('sha256').update(apiKey, 'utf8').digest('hex');
@@ -77,11 +101,26 @@ export function parseServiceStatusReport(value: unknown): ServiceStatusReport | 
         minecraftVersion = body.minecraftVersion.trim();
     }
 
+    let api: ServiceStatusReport['api'];
+    if (body.api !== undefined) {
+        if (typeof body.api !== 'object' || body.api === null || Array.isArray(body.api)) return null;
+        const apiValue = body.api as Record<string, unknown>;
+        if (!Number.isInteger(apiValue.port) || (apiValue.port as number) < 1 ||
+            (apiValue.port as number) > 65535 ||
+            (apiValue.host !== undefined && (typeof apiValue.host !== 'string' ||
+                apiValue.host.length === 0 || apiValue.host.length > 255))) return null;
+        api = {
+            port: apiValue.port as number,
+            ...(typeof apiValue.host === 'string' ? { host: apiValue.host } : {})
+        };
+    }
+
     return {
         status: body.status as ServiceStatus,
         ...(typeof body.details === 'string' ? { details: body.details.trim() } : {}),
         ...(players ? { players } : {}),
-        ...(minecraftVersion ? { minecraftVersion } : {})
+        ...(minecraftVersion ? { minecraftVersion } : {}),
+        ...(api ? { api } : {})
     };
 }
 
@@ -103,7 +142,8 @@ export function applyServiceHeartbeat(
     }
 
     const details = report.details ??
-        (current.details === HEARTBEAT_EXPIRED_DETAILS ? '' : current.details);
+        (current.details === HEARTBEAT_EXPIRED_DETAILS ||
+         current.details === 'Keine Statusmeldung seit über 60 Sekunden' ? '' : current.details);
     const playersOnline = report.status === 'online'
         ? report.players?.online ?? current.playersOnline ?? null
         : null;
@@ -142,7 +182,7 @@ export function applyHeartbeatTimeout(
     lastReportedAt: Date | null,
     manualOverride: boolean,
     now: Date
-): (ServiceStatusState & { playersOnline: null; playersMax: null; minecraftVersion: null; lastReportedAt: null }) | null {
+): (ServiceStatusState & { playersOnline: null; playersMax: null; minecraftVersion: null; lastReportedAt: Date | null }) | null {
     if (!isHeartbeatExpired(lastReportedAt, manualOverride, now)) return null;
     return {
         status: 'offline',
@@ -150,6 +190,6 @@ export function applyHeartbeatTimeout(
         playersOnline: null,
         playersMax: null,
         minecraftVersion: null,
-        lastReportedAt: null
+        lastReportedAt
     };
 }

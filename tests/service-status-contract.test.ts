@@ -11,6 +11,7 @@ import {
     MAX_SERVICE_PLAYERS,
     parseServiceStatusReport,
     resolveServiceApiKeyRecord,
+    ServiceRateLimiter,
     SERVICE_STATUS_HEARTBEAT_TIMEOUT_SECONDS
 } from '../src/api/service-status-contract.ts';
 import { parseServiceApiBearer } from '../src/api/whitelist-contract.ts';
@@ -18,6 +19,15 @@ import { parseServiceApiBearer } from '../src/api/whitelist-contract.ts';
 const serviceApiKey = Buffer.alloc(48, 23).toString('base64');
 const serviceTokenHash = createHash('sha256').update(serviceApiKey).digest('hex');
 const receivedAt = new Date('2026-11-24T20:00:00.000Z');
+
+test('service rate limiting is independent per key and resets after the window', () => {
+    const limiter = new ServiceRateLimiter(2, 60_000);
+    assert.equal(limiter.allow(1, 0), true);
+    assert.equal(limiter.allow(1, 1), true);
+    assert.equal(limiter.allow(1, 2), false);
+    assert.equal(limiter.allow(2, 2), true);
+    assert.equal(limiter.allow(1, 60_000), true);
+});
 
 test('a valid service key resolves to its single service and invalid credentials are rejected', () => {
     const bearer = parseServiceApiBearer(`Bearer ${serviceApiKey}`);
@@ -185,6 +195,14 @@ test('a heartbeat after timeout restores the reported state and clears the autom
     assert.equal(updated.statusChanged, true);
     assert.equal(updated.detailsChanged, true);
     assert.equal(updated.receivedAt, receivedAt);
+
+    const legacy = applyServiceHeartbeat(
+        { status: 'offline', details: 'Keine Statusmeldung seit über 60 Sekunden' },
+        report,
+        false,
+        receivedAt
+    );
+    assert.equal(legacy.details, '');
 });
 
 test('a heartbeat cannot override an administrator status but still records its receipt', () => {
@@ -213,7 +231,7 @@ test('a heartbeat cannot override an administrator status but still records its 
     assert.equal(updated.detailsChanged, false);
 });
 
-test('heartbeat timeout is strictly after 60 seconds, one-time, and disabled for manual overrides', () => {
+test('heartbeat timeout is strictly after 90 seconds and disabled for manual overrides', () => {
     const lastReportedAt = new Date(receivedAt.getTime());
     const exactlyTimeout = new Date(receivedAt.getTime() + SERVICE_STATUS_HEARTBEAT_TIMEOUT_SECONDS * 1000);
     const expired = new Date(exactlyTimeout.getTime() + 1);
@@ -228,8 +246,18 @@ test('heartbeat timeout is strictly after 60 seconds, one-time, and disabled for
         playersOnline: null,
         playersMax: null,
         minecraftVersion: null,
-        lastReportedAt: null
+        lastReportedAt
     });
+
     assert.equal(applyHeartbeatTimeout(null, false, expired), null);
     assert.equal(applyHeartbeatTimeout(lastReportedAt, true, expired), null);
+});
+
+test('heartbeat validates and retains the reported plugin API port', () => {
+    assert.deepEqual(parseServiceStatusReport({ status: 'online', api: { port: 43127, host: 'localhost' } }), {
+        status: 'online', api: { port: 43127, host: 'localhost' }
+    });
+    for (const api of [{ port: 0 }, { port: 65536 }, { port: 1.5 }, { port: '43127' }, { port: 1, host: '' }]) {
+        assert.equal(parseServiceStatusReport({ status: 'online', api }), null);
+    }
 });

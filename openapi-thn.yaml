@@ -1,0 +1,366 @@
+openapi: 3.0.3
+info:
+  title: TattyHost THNLink API
+  version: 1.0.0
+  description: >
+    Service routes require a per-server bearer key. Account and admin routes
+    require a website session. The local plugin API is loopback-only and must
+    never be called from a browser.
+servers:
+  - url: https://tattyhost.com
+paths:
+  /api/services/status:
+    put:
+      security: [{ serviceKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [online, offline, maintenance] }
+                details: { type: string, maxLength: 255 }
+                players:
+                  type: object
+                  required: [online, max]
+                  properties:
+                    online: { type: integer, minimum: 0 }
+                    max: { type: integer, minimum: 0 }
+                minecraftVersion: { type: string, maxLength: 32 }
+                api:
+                  type: object
+                  required: [port]
+                  properties:
+                    port: { type: integer, minimum: 1, maximum: 65535 }
+                    host: { type: string, maxLength: 255, description: Accepted but never used as a connection target. }
+      responses:
+        '204': { description: Heartbeat stored }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /api/services/whitelist:
+    get:
+      security: [{ serviceKey: [] }]
+      parameters:
+        - { in: header, name: If-None-Match, schema: { type: string } }
+      responses:
+        '200':
+          description: Full whitelist; at most 10000 players and 1 MiB.
+          headers:
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revision, players]
+                properties:
+                  revision: { type: integer, minimum: 0 }
+                  players:
+                    type: array
+                    maxItems: 10000
+                    items:
+                      type: object
+                      required: [uuid, name]
+                      properties:
+                        uuid: { $ref: '#/components/schemas/Uuid' }
+                        name: { $ref: '#/components/schemas/Name' }
+        '304': { description: Snapshot unchanged }
+        '401': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /api/services/players/stats:
+    put:
+      security: [{ serviceKey: [] }]
+      description: Invalid entries are logged and skipped; valid entries are stored globally by UUID, with older lastSeen values ignored.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [players]
+              properties:
+                players:
+                  type: array
+                  maxItems: 10000
+                  items: { $ref: '#/components/schemas/PlayerStats' }
+      responses:
+        '204': { description: Valid entries stored }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+    get:
+      security: [{ serviceKey: [] }]
+      parameters:
+        - { in: query, name: uuid, required: true, schema: { $ref: '#/components/schemas/Uuid' } }
+      responses:
+        '200':
+          description: Last stored player report.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlayerStats' }
+        '404': { $ref: '#/components/responses/Error' }
+  /api/services/players/link:
+    put:
+      security: [{ serviceKey: [] }]
+      description: >
+        Invoked by the plugin for the actual online player who used /link.
+        Codes are strings so leading zeroes are preserved.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [uuid, code]
+              properties:
+                uuid: { $ref: '#/components/schemas/Uuid' }
+                code: { type: string, pattern: '^[0-9]{6}$' }
+      responses:
+        '204': { description: Verified }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /api/account/minecraft/{uuid}/link-code:
+    post:
+      security: [{ session: [] }]
+      parameters: [{ $ref: '#/components/parameters/Uuid' }]
+      responses:
+        '200': { description: Six-digit code and expiresInSeconds; Cache-Control no-store. }
+        '404': { $ref: '#/components/responses/Error' }
+  /api/account/minecraft/{uuid}/stats:
+    get:
+      security: [{ session: [] }]
+      parameters: [{ $ref: '#/components/parameters/Uuid' }]
+      responses:
+        '200': { description: Verified owner's stats; coordinates excluded. }
+        '404': { description: No stats or ownership not verified. }
+  /api/admin/services:
+    post:
+      security: [{ session: [] }]
+      description: Administrator only. Creates a service and returns its key once; only the hash is stored.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, address, status]
+              properties:
+                name: { type: string, maxLength: 64 }
+                address: { type: string, maxLength: 255 }
+                status: { type: string, enum: [online, offline, maintenance] }
+                details: { type: string, maxLength: 255 }
+                manualOverride: { type: boolean }
+                whitelistRequired: { type: boolean }
+      responses:
+        '200':
+          description: The key is shown once and the response is not cacheable.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, serviceId, apiKey]
+                properties:
+                  success: { type: boolean }
+                  serviceId: { type: integer }
+                  apiKey: { type: string }
+        '403': { $ref: '#/components/responses/Error' }
+  /api/admin/services/{id}/api-key:
+    parameters: [{ $ref: '#/components/parameters/ServiceId' }]
+    post:
+      security: [{ session: [] }]
+      description: Administrator only. Rotate the key and immediately invalidate the previous key.
+      responses:
+        '200':
+          description: The new key is shown once and the response is not cacheable.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, apiKey]
+                properties:
+                  success: { type: boolean }
+                  apiKey: { type: string }
+        '403': { $ref: '#/components/responses/Error' }
+  /api/admin/thn/{id}/status:
+    parameters: [{ $ref: '#/components/parameters/ServiceId' }]
+    get:
+      security: [{ session: [] }]
+      responses: { '200': { description: Live plugin status; administrator only. }, '403': { $ref: '#/components/responses/Error' } }
+  /api/admin/thn/{id}/players:
+    parameters: [{ $ref: '#/components/parameters/ServiceId' }]
+    get:
+      security: [{ session: [] }]
+      responses: { '200': { description: Online players; administrator only. } }
+  /api/admin/thn/{id}/audit:
+    parameters: [{ $ref: '#/components/parameters/ServiceId' }]
+    get:
+      security: [{ session: [] }]
+      responses: { '200': { description: Latest 100 backup and whitelist audit entries; administrator only. } }
+  /api/admin/thn/{id}/players/{uuid}/stats:
+    parameters: [{ $ref: '#/components/parameters/ServiceId' }, { $ref: '#/components/parameters/Uuid' }]
+    get:
+      security: [{ session: [] }]
+      responses: { '200': { description: Live player stats, including coordinates; administrator only. } }
+  /api/admin/thn/{id}/players/{uuid}/stored-stats:
+    parameters: [{ $ref: '#/components/parameters/ServiceId' }, { $ref: '#/components/parameters/Uuid' }]
+    get:
+      security: [{ session: [] }]
+      responses: { '200': { description: Globally stored player stats; administrator only. } }
+  /api/admin/thn/{id}/players/{uuid}/backups:
+    parameters: [{ $ref: '#/components/parameters/ServiceId' }, { $ref: '#/components/parameters/Uuid' }]
+    get:
+      security: [{ session: [] }]
+      responses: { '200': { description: Player backup list; administrator only and audited. } }
+    post:
+      security: [{ session: [] }]
+      responses: { '200': { description: Backup created; administrator only and audited. } }
+  /api/admin/thn/{id}/players/{uuid}/backups/{backupId}:
+    parameters: [{ $ref: '#/components/parameters/ServiceId' }, { $ref: '#/components/parameters/Uuid' }, { $ref: '#/components/parameters/BackupId' }]
+    get:
+      security: [{ session: [] }]
+      responses:
+        '200':
+          description: Streamed player backup; administrator only and audited.
+          content: { application/json: { schema: { type: string, format: binary } } }
+  /api/admin/thn/{id}/players/{uuid}/backups/{backupId}/restore:
+    parameters: [{ $ref: '#/components/parameters/ServiceId' }, { $ref: '#/components/parameters/Uuid' }, { $ref: '#/components/parameters/BackupId' }]
+    post:
+      security: [{ session: [] }]
+      responses: { '200': { description: Restore requested; administrator only and audited. } }
+  /api/admin/thn/{id}/worlds/backups:
+    parameters: [{ $ref: '#/components/parameters/ServiceId' }]
+    get:
+      security: [{ session: [] }]
+      responses: { '200': { description: World backup list; administrator only and audited. } }
+  /api/admin/thn/{id}/worlds/{world}/backups:
+    parameters: [{ $ref: '#/components/parameters/ServiceId' }, { $ref: '#/components/parameters/World' }]
+    post:
+      security: [{ session: [] }]
+      responses: { '200': { description: Asynchronous backup started; administrator only and audited. } }
+  /api/admin/thn/{id}/worlds/{world}/backups/{backupId}:
+    parameters: [{ $ref: '#/components/parameters/ServiceId' }, { $ref: '#/components/parameters/World' }, { $ref: '#/components/parameters/BackupId' }]
+    get:
+      security: [{ session: [] }]
+      responses:
+        '200':
+          description: Streamed ZIP; administrator only and audited.
+          content: { application/zip: { schema: { type: string, format: binary } } }
+  /api/admin/thn/{id}/host-override:
+    parameters: [{ $ref: '#/components/parameters/ServiceId' }]
+    put:
+      security: [{ session: [] }]
+      description: Write-only loopback IP override; null resets to 127.0.0.1.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [host]
+              properties: { host: { type: string, nullable: true } }
+      responses: { '200': { description: Updated; administrator only. } }
+  /v1/status:
+    servers: [{ url: 'http://127.0.0.1:{port}', variables: { port: { default: '43127' } } }]
+    get:
+      security: []
+      responses: { '200': { description: Plugin version, Minecraft version, player counts and LuckPerms availability. } }
+  /v1/players:
+    servers: [{ url: 'http://127.0.0.1:{port}', variables: { port: { default: '43127' } } }]
+    get:
+      security: []
+      responses: { '200': { description: Online player UUIDs and names. } }
+  /v1/players/{uuid}/stats:
+    servers: [{ url: 'http://127.0.0.1:{port}', variables: { port: { default: '43127' } } }]
+    parameters: [{ $ref: '#/components/parameters/Uuid' }]
+    get:
+      security: []
+      responses: { '200': { description: Live player statistics. }, '404': { $ref: '#/components/responses/Error' } }
+  /v1/players/{uuid}/backups:
+    servers: [{ url: 'http://127.0.0.1:{port}', variables: { port: { default: '43127' } } }]
+    parameters: [{ $ref: '#/components/parameters/Uuid' }]
+    get:
+      security: []
+      responses: { '200': { description: Player backups, newest first. } }
+    post:
+      security: []
+      responses: { '201': { description: Player backup created. }, '404': { $ref: '#/components/responses/Error' } }
+  /v1/players/{uuid}/backups/{backupId}:
+    servers: [{ url: 'http://127.0.0.1:{port}', variables: { port: { default: '43127' } } }]
+    parameters: [{ $ref: '#/components/parameters/Uuid' }, { $ref: '#/components/parameters/BackupId' }]
+    get:
+      security: []
+      responses:
+        '200':
+          description: Player backup JSON stream.
+          content: { application/json: { schema: { type: string, format: binary } } }
+  /v1/players/{uuid}/backups/{backupId}/restore:
+    servers: [{ url: 'http://127.0.0.1:{port}', variables: { port: { default: '43127' } } }]
+    parameters: [{ $ref: '#/components/parameters/Uuid' }, { $ref: '#/components/parameters/BackupId' }]
+    post:
+      security: []
+      responses: { '200': { description: Player backup restored. } }
+  /v1/worlds/backups:
+    servers: [{ url: 'http://127.0.0.1:{port}', variables: { port: { default: '43127' } } }]
+    get:
+      security: []
+      responses: { '200': { description: Backups grouped by world. } }
+  /v1/worlds/{world}/backups:
+    servers: [{ url: 'http://127.0.0.1:{port}', variables: { port: { default: '43127' } } }]
+    parameters: [{ $ref: '#/components/parameters/World' }]
+    post:
+      security: []
+      responses: { '202': { description: World backup started asynchronously. }, '409': { $ref: '#/components/responses/Error' } }
+  /v1/worlds/{world}/backups/{backupId}:
+    servers: [{ url: 'http://127.0.0.1:{port}', variables: { port: { default: '43127' } } }]
+    parameters: [{ $ref: '#/components/parameters/World' }, { $ref: '#/components/parameters/BackupId' }]
+    get:
+      security: []
+      responses:
+        '200':
+          description: World ZIP stream.
+          content: { application/zip: { schema: { type: string, format: binary } } }
+components:
+  securitySchemes:
+    serviceKey: { type: http, scheme: bearer }
+    session: { type: apiKey, in: cookie, name: token }
+  parameters:
+    ServiceId: { in: path, name: id, required: true, schema: { type: integer, minimum: 1 } }
+    Uuid: { in: path, name: uuid, required: true, schema: { $ref: '#/components/schemas/Uuid' } }
+    World: { in: path, name: world, required: true, schema: { type: string, pattern: '^[A-Za-z0-9._-]{1,128}$' } }
+    BackupId: { in: path, name: backupId, required: true, schema: { type: string } }
+  responses:
+    Error:
+      description: Error response.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error]
+            properties: { error: { type: string } }
+  schemas:
+    Uuid: { type: string, pattern: '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$' }
+    Name: { type: string, pattern: '^[A-Za-z0-9_]{1,16}$' }
+    PlayerStats:
+      type: object
+      required: [uuid, name, lastSeen, online, playtimeTicks, deaths, mobKills, playerKills, level, health, foodLevel, gameMode, world, x, y, z]
+      properties:
+        uuid: { $ref: '#/components/schemas/Uuid' }
+        name: { $ref: '#/components/schemas/Name' }
+        lastSeen: { type: integer, minimum: 0, description: Unix epoch milliseconds. }
+        online: { type: boolean }
+        playtimeTicks: { type: integer, minimum: 0, description: Total play time; 20 ticks per second. }
+        deaths: { type: integer, minimum: 0 }
+        mobKills: { type: integer, minimum: 0 }
+        playerKills: { type: integer, minimum: 0 }
+        level: { type: integer, minimum: 0 }
+        health: { type: number, minimum: 0, maximum: 2048 }
+        foodLevel: { type: integer, minimum: 0, maximum: 20 }
+        gameMode: { type: string, pattern: '^[A-Za-z_]{1,32}$' }
+        world: { type: string, pattern: '^[A-Za-z0-9._-]{1,128}$' }
+        x: { type: number }
+        y: { type: number }
+        z: { type: number }
+        primaryGroup: { type: string, minLength: 1, maxLength: 128 }

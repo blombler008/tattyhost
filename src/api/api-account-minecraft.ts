@@ -27,12 +27,14 @@ async function getMinecraftAccountsAPIRoute(_req: Request, res: Response) {
     if (!session) return;
 
     try {
-        const accounts = await query<{ player_uuid: string; player_name: string; created_at: Date }>(
-            `SELECT player_uuid, player_name, created_at
-             FROM user_minecraft_accounts WHERE user_uuid = ? ORDER BY created_at`,
+        const accounts = await query<{ player_uuid: string; player_name: string; created_at: Date; verified: number | boolean }>(
+            `SELECT a.player_uuid, a.player_name, a.created_at, v.player_uuid IS NOT NULL AS verified
+             FROM user_minecraft_accounts a
+             LEFT JOIN verified_minecraft_links v ON v.user_uuid = a.user_uuid AND v.player_uuid = a.player_uuid
+             WHERE a.user_uuid = ? ORDER BY a.created_at`,
             [session.userId]
         );
-        sendSuccess(res, { accounts });
+        sendSuccess(res, { accounts: accounts.map((account) => ({ ...account, verified: Number(account.verified) === 1 })) });
     } catch (error) {
         logApiFailure(res, 'api.account.minecraft_load_failed', error);
         sendServerFailure(res);

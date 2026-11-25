@@ -88,7 +88,7 @@ export default function HomePage() {
                             )}
                         </div>
                         <p className="mt-4 text-xs leading-5 theme-muted">
-                            {t('Der Status aktualisiert sich automatisch. Ohne Servermeldung seit 60 Sekunden wird der Dienst als offline angezeigt.')}
+                            {t('Der Status aktualisiert sich automatisch. Ohne Servermeldung seit 90 Sekunden wird der Dienst als offline angezeigt.')}
                         </p>
                     </div>
                 </div>

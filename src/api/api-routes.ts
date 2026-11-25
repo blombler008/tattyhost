@@ -6,6 +6,7 @@ import { createAuthRouter } from './api-auth.ts';
 import { createFilesRouter } from './api-files.ts';
 import { createServicesRouter } from './api-services.ts';
 import { createWhitelistRouter } from './api-whitelist.ts';
+import { createThnPlayersRouter } from './api-thn-players.ts';
 
 export default function createApiRouter(app: Router): Router {
     const router = Router();
@@ -17,6 +18,7 @@ export default function createApiRouter(app: Router): Router {
         createAccountRouter(),
         createAccountMinecraftRouter(),
         createServicesRouter(),
+        createThnPlayersRouter(),
         createWhitelistRouter(),
         createFilesRouter(),
         adminRouter

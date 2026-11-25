@@ -86,25 +86,31 @@ LIMIT 50;
 
 ## Server status API
 
-Create each service in **Admin → Services**. Each service gets its own
-64-character Base64 API key, shown only when the service is created or its key
-is rotated. Tattyhost stores only the SHA-256 hash. Rotating a key immediately
-invalidates the previous one; deleting a service also deletes its key. Existing
+Create each service in **Admin → Services**. Its 64-character Base64 key is
+displayed once in the admin area when the service is created or its key is
+rotated. Transfer it securely to the plugin's configuration. Tattyhost stores
+only the SHA-256 hash. Rotating a key immediately invalidates the previous
+one; deleting a service also deletes its key. Existing
 global server-status keys are not accepted by this service-specific API.
+Authenticated service requests are limited to 120 per minute per service
+within each web-server process; excess requests receive `429`.
 
 Send a `PUT` request to `/api/services/status` over HTTPS with the key in the
 `Authorization` header. The key identifies the service, so the body does not
 include a `name`. `status` must be `online`, `offline`, or `maintenance`;
 `details` is optional and limited to 255 characters. Optional `players` contains
 nonnegative integer `online` and `max` counts (each up to 4,294,967,295), and
-`minecraftVersion` is limited to 32 characters. Older heartbeats may omit
-either field. Counts and version are cleared on offline/maintenance reports and
+`minecraftVersion` is limited to 32 characters. Optional `api.port` is the
+plugin API port (1–65535); `api.host` is accepted but not used as a connection
+target. Older heartbeats may omit these fields; omitting `api` clears the
+stored port so a stale endpoint cannot be used. A successful heartbeat returns
+`204 No Content`. Counts and version are cleared on offline/maintenance reports and
 heartbeat timeouts, so the public server cards only show them while the service
 is online.
 
-Send a heartbeat about every 30 seconds. After 60 seconds without a report, a
+Send a heartbeat about every 30 seconds. After 90 seconds without a report, a
 service without a manual override is persisted as offline once, with the
-details `Keine Statusmeldung seit über 60 Sekunden`. The next heartbeat clears
+details `Keine Statusmeldung seit über 90 Sekunden`. The next heartbeat clears
 that timeout detail if it omits `details`. A manual override makes the
 administrator's status and details authoritative: heartbeats and automatic
 timeouts do not change them until the override is disabled. Connected pages
@@ -123,6 +129,7 @@ while ($true) {
         details = "Server läuft"
         players = @{ online = 3; max = 20 }
         minecraftVersion = "26.1"
+        api = @{ port = 43127 }
     } | ConvertTo-Json
 
     Invoke-RestMethod `
@@ -153,10 +160,64 @@ does not change the identity being reviewed.
 
 The Paper server reads its own approved list using the existing per-service
 Bearer key. Each service has a monotonically increasing whitelist revision.
-The revision changes only when a UUID is added or removed; the ETag is scoped
+The revision changes when a UUID is added or removed or its name changes; the ETag is scoped
 to the service and revision so an unchanged list can be fetched with
-`If-None-Match` and returns `304` with no body. The website remains the source
+`If-None-Match` and returns `304` with no body. A snapshot is limited to 10,000
+players and 1 MiB; approvals are rejected when the player limit is reached.
+The website remains the source
 of truth while the Minecraft server is offline.
+
+## THNLink integration
+
+The public and admin HTTP contracts are documented in
+[openapi-thn.yaml](./openapi-thn.yaml). The implementation prompt for the
+Minecraft plugin is in [thnlink-plugin-prompt.md](./docs/thnlink-plugin-prompt.md).
+The local API is accessed only from the web server, using the port in the
+latest heartbeat and `127.0.0.1`. An administrator may set a write-only
+per-service loopback IP override with `PUT /api/admin/thn/:id/host-override`,
+body `{"host":"::1"}`; use `{"host":null}` to reset it. Non-loopback hosts
+are rejected, and neither host nor port is returned to the browser.
+
+Plugin requests require the service key. For example, with the key supplied by
+the process environment:
+
+```sh
+curl -X PUT 'https://tattyhost.com/api/services/status' \
+  -H "Authorization: Bearer $TATTYHOST_STATUS_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{"status":"online","details":"Ready","players":{"online":3,"max":20},"minecraftVersion":"26.1","api":{"port":43127}}'
+
+curl -i 'https://tattyhost.com/api/services/whitelist' \
+  -H "Authorization: Bearer $TATTYHOST_STATUS_API_KEY"
+
+curl -X PUT 'https://tattyhost.com/api/services/players/stats' \
+  -H "Authorization: Bearer $TATTYHOST_STATUS_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{"players":[{"uuid":"01234567-89ab-cdef-0123-456789abcdef","name":"Player","lastSeen":1764076800000,"online":true,"playtimeTicks":123456,"deaths":4,"mobKills":8,"playerKills":1,"level":10,"health":20,"foodLevel":20,"gameMode":"SURVIVAL","world":"world","x":1,"y":64,"z":2}]}'
+```
+
+Users first add a Minecraft name in their account settings. To verify ownership,
+they generate a six-digit code there and enter `/link <code>` in-game within
+ten minutes. The plugin sends the actual player's UUID and the code to
+`PUT /api/services/players/link`; codes are single-use, have a five-attempt
+limit per UUID per ten minutes, and are not logged. Existing name-only
+associations are not verified. Only verified owners can access their stored
+stats, and coordinates are excluded from their response. Stats are stored
+globally by UUID: the latest timestamp from any server wins, so playtime is
+not summed across servers. An online report older than 90 seconds is displayed
+as offline.
+
+Administrators can use **THNLink** in the admin area to inspect players, list,
+create, download and restore player backups, and create or download world
+backups. Backup content is streamed directly from the game server, not stored
+in the web database. These operations are restricted server-side and audited.
+The THNLink admin tab shows the latest 100 backup and whitelist audit entries
+for the selected service, including the actor and target.
+World restore is manual; no world-restore endpoint is provided. Local plugin
+requests use a 20-second timeout, 90 seconds for backup creation, and no total
+timeout after a download starts. The plugin must bind its unauthenticated API
+to loopback only; do not rely on the firewall to protect an externally bound
+API.
 
 ## Protected file browser
 
@@ -235,7 +296,7 @@ Authentication types:
 | --- | --- | --- |
 | `GET /services` | Public | List services and their current status. A service with an expired heartbeat is returned as offline. |
 | `GET /services/events` | Public | Open a server-sent events stream. Sends an initial service snapshot and pushes changed statuses; clients reconnect automatically. |
-| `PUT /services/status` | Per-service API key | Report `{ "status": "online", "details": "...", "players": { "online": 3, "max": 20 }, "minecraftVersion": "26.1" }`. Counts and version are optional; statuses are `online`, `offline`, or `maintenance`. |
+| `PUT /services/status` | Per-service API key | Report `{ "status": "online", "details": "...", "players": { "online": 3, "max": 20 }, "minecraftVersion": "26.1", "api": { "port": 43127 } }`. Counts, version and API are optional; statuses are `online`, `offline`, or `maintenance`. Returns 204. |
 | `GET /services/whitelist` | Per-service API key | Return the full list `{ "revision": 42, "players": [{ "uuid": "01234567-89ab-cdef-0123-456789abcdef", "name": "Playername" }] }` (canonical unique UUIDs, Mojang-resolved Java names; an empty list is valid). The revision and ETag also change when only a name changes. Supports `If-None-Match`; returns an empty-body `304` when unchanged. |
 | `POST /services/whitelist/requests` | Session | Submit `{ "serviceId": 1, "playerName": "Notch", "reason": "..." }` (reason required, max. 500 characters). Only allowed for services with `whitelistRequired` enabled in the admin panel. The server resolves and stores the official profile UUID; duplicate profiles are rejected. The profile is also linked to the user's Minecraft accounts. |
 | `GET /account/whitelist` | Session | Own whitelist requests across all servers with status. |
@@ -262,15 +323,15 @@ All routes in this section require an authenticated administrator session.
 | `DELETE /admin/users/:uuid` | Delete a user account. An administrator cannot delete or demote their own account. |
 | `POST /admin/users/:uuid/password-reset` | Send a one-time password-reset link to the user's account email. An optional `{ "recipientEmail": "other@example.com" }` sends it to a custom address without changing the account email. |
 | `GET /admin/services` | List services and per-service API-key configuration; never returns key material. |
-| `POST /admin/services` | Create `{ "name": "...", "address": "...", "status": "maintenance", "details": "" }` and its API key. The key is returned once. |
+| `POST /admin/services` | Create `{ "name": "...", "address": "...", "status": "maintenance", "details": "" }` and return its API key once. |
+| `POST /admin/services/:id/api-key` | Create or rotate the service's key and return it once; immediately invalidates the previous key. |
 | `PUT /admin/services/:id` | Update a service's `name`, `address`, `status`, `details`, and `manualOverride`. Setting `manualOverride` to `true` prevents heartbeats and timeouts from changing its status/details. |
 | `DELETE /admin/services/:id` | Delete a service and its associated API key. |
-| `POST /admin/services/:id/api-key` | Generate or rotate that service's API key; returns the new key once and immediately invalidates the old key. |
 | `GET /admin/whitelist/requests?serviceId=1&userId=<uuid>&status=pending` | List whitelist applications; `serviceId`, `userId` and `status` are optional filters. |
-| `PATCH /admin/whitelist/requests/:id` | Approve or reject a request with `{ "status": "approved" }` or `{ "status": "rejected" }` (rejected/revoked requests can be approved later). Approval resolves the profile again and increments the service revision only when adding a UUID. |
+| `PATCH /admin/whitelist/requests/:id` | Approve or reject a request with `{ "status": "approved" }` or `{ "status": "rejected" }` (rejected/revoked requests can be approved later). Approval resolves the profile again and increments the service revision when adding a UUID or changing its name. |
 | `GET /admin/whitelist/players?serviceId=1` | List approved players for a service. |
 | `DELETE /admin/whitelist/players/:serviceId/:uuid` | Revoke an approved UUID and increment the service revision. |
-| `POST /admin/whitelist/grant` | Admin edit: put a user on a service's whitelist directly with `{ "userId": "<uuid>", "serviceId": 1, "playerName": "Notch" }`. Creates an approved request with the reason `Admin edit: <admin name>`, links the Minecraft account to the user and increments the revision only when adding a new UUID. Works regardless of `whitelistRequired`; `409` if the profile is approved or requested by another user. |
+| `POST /admin/whitelist/grant` | Admin edit: put a user on a service's whitelist directly with `{ "userId": "<uuid>", "serviceId": 1, "playerName": "Notch" }`. Creates an approved request with the reason `Admin edit: <admin name>`, saves the Minecraft account for the user and increments the revision when the snapshot changes. This does not verify ownership. Works regardless of `whitelistRequired`; `409` if the profile is approved or requested by another user. |
 | `GET /admin/whitelist/history?userId=<uuid>` | Notes about users who removed themselves from a whitelist (latest 50, from the audit log). |
 | `GET`/`POST /admin/users/:uuid/minecraft` | List or add (`{ "playerName": "Notch" }`) a user's Minecraft accounts. |
 | `PUT /admin/users/:uuid/minecraft/:playerUuid` | Refresh the stored name from Mojang by UUID (also updates whitelist entries). |
