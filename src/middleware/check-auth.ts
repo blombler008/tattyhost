@@ -4,6 +4,7 @@ import type { Request, Response, NextFunction } from 'express';
 import type { SessionData } from '@tattyhost/CryptoUtils';
 import { getUserSession } from '../auth/user-session.ts';
 import { logEvent } from '../logging/app-logger.ts';
+import { recordClientIp } from '../auth/client-ip.ts';
 
 interface SSRAuthState {
     isLoggedIn: boolean;
@@ -21,6 +22,7 @@ export async function checkAuthMiddleware(req: Request, res: Response, next: Nex
         const session = await getUserSession(req, (reason) => {
             failureReason = reason;
         });
+        if (session) await recordClientIp(session.userId, req.ip);
         if (isHomeNavigation) {
             logEvent('debug', 'auth.session.home_diagnostic', {
                 requestId: res.locals.requestId,

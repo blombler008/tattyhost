@@ -127,12 +127,12 @@ test('service key pre-authentication only applies to exact plugin endpoints', as
         if (!requireUser(res)) return;
         res.json({ playerName: req.body.playerName });
     });
-    app.all(['/api/services/status', '/api/services/whitelist', '/api/services/players/stats', '/api/services/players/link'], (_req, res) => res.status(204).end());
+    app.all(['/api/services/status', '/api/services/whitelist', '/api/services/players/stats', '/api/services/players/link', '/api/services/players/lookup'], (_req, res) => res.status(204).end());
     const server = http.createServer(app);
     const port = await listen(server);
     const base = `http://127.0.0.1:${port}`;
     try {
-        for (const path of ['/api/services/status', '/api/services/whitelist', '/api/services/players/stats', '/api/services/players/link']) {
+        for (const path of ['/api/services/status', '/api/services/whitelist', '/api/services/players/stats', '/api/services/players/link', '/api/services/players/lookup']) {
             assert.equal((await fetch(`${base}${path}?test=1`)).status, 401);
             assert.equal((await fetch(`${base}${path}/`, { headers: { Authorization: 'Bearer valid' } })).status, 204);
         }

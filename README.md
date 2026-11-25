@@ -196,6 +196,29 @@ of truth while the Minecraft server is offline.
 
 ## THNLink integration
 
+Set `IP_LOOKUP_HMAC_SECRET` in the server environment to a persistent,
+independently generated 32-byte random secret encoded as 64 hexadecimal
+characters, for example generated with `openssl rand -hex 32`. Startup fails
+without it. Never commit or share the secret; changing it makes existing IP
+records unmatchable until users visit again. All web instances sharing the
+database must use the same secret.
+
+The personal server-list lookup keeps only HMAC-SHA256 IP hashes, matches
+activity from the last 24 hours, and periodically deletes records before they
+reach 48 hours (also on startup). Users can opt in in account settings; the
+feature is disabled by default. A
+shared IP, multiple verified accounts, or missing player stats returns 404.
+Existing session and login-attempt records continue to store IP addresses.
+
+Express trusts forwarding headers only from loopback proxies. Deploy the reverse
+proxy on loopback, and configure it to replace or safely append the client
+address in `X-Forwarded-For`; do not expose another untrusted loopback proxy
+to clients. If the proxy is not on loopback, client IPs will not be forwarded.
+Run `npm run test:services` and `npm run test:settings` for the lookup and
+setting tests. To include the lookup SQL integration test, set
+`IP_LOOKUP_TEST_DATABASE=1` and configure the database connection; the test uses
+connection-local temporary tables and does not change persistent tables.
+
 The public and admin HTTP contracts are documented in
 [openapi-thn.yaml](./openapi-thn.yaml). The implementation prompt for the
 Minecraft plugin is in [thnlink-plugin-prompt.md](./docs/thnlink-plugin-prompt.md).
@@ -228,6 +251,11 @@ curl -X PUT 'https://tattyhost.com/api/services/players/stats' \
   -H "Authorization: Bearer $TATTYHOST_STATUS_API_KEY" \
   -H 'Content-Type: application/json' \
   --data '{"players":[{"uuid":"01234567-89ab-cdef-0123-456789abcdef","name":"Player","lastSeen":1764076800000,"online":true,"playtimeTicks":123456,"deaths":4,"mobKills":8,"playerKills":1,"level":10,"health":20,"foodLevel":20,"gameMode":"SURVIVAL","world":"world","x":1,"y":64,"z":2}]}'
+
+curl -i -X PUT 'https://tattyhost.com/api/services/players/lookup' \
+  -H "Authorization: Bearer $TATTYHOST_STATUS_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{"ip":"203.0.113.7"}'
 ```
 
 Users first add a Minecraft name in their account settings. To verify ownership,

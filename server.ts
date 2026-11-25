@@ -6,6 +6,7 @@ import cookieParser from 'cookie-parser';
 import ApiRouter from './src/api/api-routes.ts';
 import { createServiceApiPreAuthRouter } from './src/api/api-services.ts';
 import { checkAuthMiddleware } from './src/middleware/check-auth.ts';
+import { getIpLookupSecret, pruneClientIps } from './src/auth/client-ip.ts';
 import { setupAllTables } from './lib/SQLUtils/DBSchemaSetup.ts';
 import { closeDatabasePool, getDatabasePoolStats } from './lib/SQLUtils/SQLUtils.ts';
 import { flushFileLogs, logEvent, pruneLogFiles } from './src/logging/app-logger.ts';
@@ -34,7 +35,9 @@ async function failStartup(event: string, error: unknown): Promise<never> {
 }
 
 try {
+    getIpLookupSecret();
     await setupAllTables();
+    await pruneClientIps();
 } catch (error) {
     await failStartup('system.database.setup_failed', error);
 }
@@ -52,6 +55,7 @@ const app = express();
 app.set('trust proxy', 'loopback');
 
 let vite: import('vite').ViteDevServer | undefined = undefined;
+let mountStatic: (() => void) | undefined;
 try {
     if (!isProduction) {
         const { createServer } = await import('vite');
@@ -63,12 +67,15 @@ try {
 
         logEvent('info', 'system.vite.started', { mode: 'middleware' });
 
-        app.use(vite.middlewares);
+        const viteMiddleware = vite.middlewares;
+        mountStatic = () => { app.use(viteMiddleware); };
     } else {
         const compression = (await import('compression')).default;
         const sirv = (await import('sirv')).default;
-        app.use(compression());
-        app.use(base, sirv('./dist/client', { extensions: [] }));
+        mountStatic = () => {
+            app.use(compression());
+            app.use(base, sirv('./dist/client', { extensions: [] }));
+        };
     }
 } catch (error) {
     await failStartup('system.http_middleware.start_failed', error);
@@ -77,9 +84,12 @@ try {
 app.use(requestLoggingMiddleware);
 app.use(createServiceApiPreAuthRouter());
 app.use('/api/services/players/stats', express.json({ limit: '8mb' }));
+app.use('/api/services/players/lookup', express.json({ limit: '1kb' }));
 app.use(express.json());
 app.use(cookieParser());
 app.use(checkAuthMiddleware); // Middleware to check auth status
+if (!mountStatic) throw new Error('Static middleware was not initialized');
+mountStatic();
 ApiRouter(app);
 
 app.use('*all', async (req: Request, res: Response) => {
@@ -169,6 +179,12 @@ const retentionTimer = setInterval(() => {
     });
 }, 24 * 60 * 60 * 1000);
 retentionTimer.unref();
+const ipRetentionTimer = setInterval(() => {
+    void pruneClientIps().catch((error: unknown) => {
+        logEvent('error', 'security.client_ip_retention_failed', { error });
+    });
+}, 30 * 60 * 1000);
+ipRetentionTimer.unref();
 
 logOperationalEvent({
     event: 'system.database.ready',
@@ -187,6 +203,7 @@ async function shutdown(signal: string) {
     if (shuttingDown) return;
     shuttingDown = true;
     clearInterval(retentionTimer);
+    clearInterval(ipRetentionTimer);
     logOperationalEvent({ event: 'system.server.stopping', details: { signal } });
 
     httpServer.close(async (error) => {

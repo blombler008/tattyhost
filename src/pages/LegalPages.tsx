@@ -72,6 +72,12 @@ export function ImprintPage() {
                     </p>
                 </div>
                 <div>
+                    <h3 className="theme-text font-semibold">{t('Personalisierte Serverliste')}</h3>
+                    <p className="mt-2 leading-7 theme-muted">
+                        {t('Zur Personalisierung der Serverliste werden IP-Adressen angemeldeter Benutzer, die diese Funktion aktiviert haben, mit einem Schlüssel gehasht und bis zu 48 Stunden gespeichert. Diese Funktion ist standardmäßig deaktiviert und kann in den Kontoeinstellungen aktiviert werden.')}
+                    </p>
+                </div>
+                <div>
                     <h3 className="theme-text font-semibold">{t('Einstellungen und lokale Speicherung')}</h3>
                     <p className="mt-2 leading-7 theme-muted">
                         {t('Sprache, Zeitzone und Dark-Mode-Präferenz werden dem jeweiligen Benutzerkonto zugeordnet. Die Website speichert außerdem die Auswahl zum Cookie-Hinweis und die Darstellungseinstellung lokal im Browser.')}

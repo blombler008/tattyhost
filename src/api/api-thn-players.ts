@@ -2,6 +2,7 @@ import { randomInt } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import { query, withDatabaseTransaction } from '@tattyhost/SQLutils';
 import { logEvent } from '../logging/app-logger.ts';
+import { hashClientIp, isPublicClientIp, normalizeClientIp } from '../auth/client-ip.ts';
 import { authenticateMinecraftService } from './api-services.ts';
 import { logApiFailure, requireUser, sendFailure, sendServerFailure, sendSuccess } from './api-shared.ts';
 import { hashLinkCode, isCanonicalPlayerUuid, isLinkCode, ownPlayerStats, parsePlayerBatch, parsePlayerStats } from './thn-player-contract.ts';
@@ -190,6 +191,78 @@ async function getServiceStats(req: Request, res: Response) {
     }
 }
 
+export type LookupRow = {
+    player_name: string;
+    last_seen: number | bigint | string | null;
+    stats_json: string | null;
+};
+
+export async function loadLookupRows(
+    ipHash: string,
+    runQuery: (sql: string, params: string[]) => Promise<LookupRow[]> = query
+): Promise<LookupRow[]> {
+    return runQuery(
+        `SELECT a.player_name, s.last_seen, s.stats_json
+         FROM user_client_ips ip
+         JOIN users u ON u.uuid = ip.user_uuid AND u.is_active = TRUE
+         LEFT JOIN user_settings settings ON settings.user_uuid = u.uuid
+         JOIN verified_minecraft_links v ON v.user_uuid = u.uuid
+         JOIN user_minecraft_accounts a ON a.user_uuid = v.user_uuid AND a.player_uuid = v.player_uuid
+         LEFT JOIN minecraft_player_stats s ON s.player_uuid = v.player_uuid
+         WHERE ip.ip_hash = ? AND ip.seen_at >= DATE_SUB(CURRENT_TIMESTAMP(3), INTERVAL 24 HOUR)
+           AND COALESCE(settings.personalised_server_list, FALSE) = TRUE
+         LIMIT 2`,
+        [ipHash]
+    );
+}
+
+export function createPlayerLookupHandler(
+    load = loadLookupRows,
+    authenticate = authenticateMinecraftService
+) {
+    return async (req: Request, res: Response) => {
+        res.setHeader('Cache-Control', 'no-store');
+        if (!await authenticate(req, res, true)) return;
+        if (!req.is('application/json')) {
+            res.status(415).json({ error: 'Content-Type muss application/json sein' });
+            return;
+        }
+        const body: unknown = req.body;
+        if (!body || typeof body !== 'object' || Array.isArray(body) ||
+            Object.keys(body).length !== 1 || !('ip' in body)) {
+            res.status(400).json({ error: 'invalid body or ip' });
+            return;
+        }
+        const address = normalizeClientIp(body.ip);
+        if (!address) {
+            res.status(400).json({ error: 'invalid body or ip' });
+            return;
+        }
+        if (!isPublicClientIp(address)) {
+            res.status(404).json({ error: 'not found' });
+            return;
+        }
+        try {
+            const rows = await load(hashClientIp(address));
+            const row = rows.length === 1 ? rows[0] : null;
+            if (!row || row.last_seen === null || row.stats_json === null) {
+                res.status(404).json({ error: 'not found' });
+                return;
+            }
+            const now = Date.now();
+            const stats = parsePlayerStats(JSON.parse(row.stats_json), now);
+            const lastSeen = Number(row.last_seen);
+            if (!stats || !Number.isSafeInteger(lastSeen) || lastSeen < 0 || lastSeen !== stats.lastSeen) {
+                throw new Error('Invalid stored player stats');
+            }
+            res.json({ name: row.player_name, lastSeen: stats.online && now - lastSeen <= 90_000 ? now : lastSeen });
+        } catch (error) {
+            logApiFailure(res, 'api.player_lookup.failed', error);
+            res.status(500).json({ error: 'Der Dienst ist derzeit nicht verfügbar' });
+        }
+    };
+}
+
 type OwnedStatsRow = { stats_json: string; server_name: string | null };
 
 async function loadOwnedStats(uuid: string, userId: string): Promise<OwnedStatsRow | null> {
@@ -235,5 +308,6 @@ export function createThnPlayersRouter(): Router {
     router.put('/services/players/link', verifyLink);
     router.put('/services/players/stats', putStats);
     router.get('/services/players/stats', getServiceStats);
+    router.put('/services/players/lookup', createPlayerLookupHandler());
     return router;
 }

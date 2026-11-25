@@ -17,6 +17,7 @@ type UserSettings = {
     language: string;
     timezone: string;
     darkMode: boolean;
+    personalisedServerList: boolean;
 };
 
 type UserAccount = {
@@ -354,6 +355,19 @@ export default function UserSettingsPage() {
                                 updateSetting('darkMode', event.target.checked);
                                 setDarkMode(event.target.checked);
                             }}
+                        />
+                    </label>
+
+                    <label className="flex cursor-pointer items-center justify-between gap-4 rounded-xl border p-4 theme-input">
+                        <span>
+                            <span className="block text-sm font-medium theme-text">{t('Personalisierte Serverliste')}</span>
+                            <span className="mt-1 block text-xs theme-muted">{t('Serverliste anhand deiner IP-Adresse personalisieren. Du kannst dies jederzeit deaktivieren.')}</span>
+                        </span>
+                        <input
+                            className="h-5 w-5 accent-sky-300"
+                            type="checkbox"
+                            checked={settings.personalisedServerList}
+                            onChange={(event) => updateSetting('personalisedServerList', event.target.checked)}
                         />
                     </label>
 

@@ -127,7 +127,7 @@ export const authenticateMinecraftService = createMinecraftServiceAuthenticator(
 export function createServiceApiPreAuthRouter(authenticate = authenticateServiceApiKey): Router {
     const router = Router();
     router.all(
-        ['/api/services/status', '/api/services/whitelist', '/api/services/players/stats', '/api/services/players/link'],
+        ['/api/services/status', '/api/services/whitelist', '/api/services/players/stats', '/api/services/players/link', '/api/services/players/lookup'],
         async (req, res, next) => {
             if (await authenticate(req, res)) next();
         }

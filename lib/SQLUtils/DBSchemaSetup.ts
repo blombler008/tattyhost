@@ -190,8 +190,25 @@ export async function setupUserSettingsTable() {
             language VARCHAR(32) DEFAULT 'en',
             timezone VARCHAR(64) DEFAULT 'UTC',
             dark_mode BOOLEAN DEFAULT TRUE,
+            personalised_server_list BOOLEAN NOT NULL DEFAULT FALSE,
             FOREIGN KEY (user_uuid) REFERENCES users(uuid) ON DELETE CASCADE
         );
+    `);
+    await execute('ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS personalised_server_list BOOLEAN NOT NULL DEFAULT FALSE');
+    await execute('ALTER TABLE user_settings ALTER COLUMN personalised_server_list SET DEFAULT FALSE');
+}
+
+export async function setupUserClientIpsTable() {
+    await execute(`
+        CREATE TABLE IF NOT EXISTS user_client_ips (
+            user_uuid CHAR(36) NOT NULL,
+            ip_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            seen_at DATETIME(3) NOT NULL,
+            PRIMARY KEY (user_uuid, ip_hash),
+            INDEX idx_client_ip_seen (ip_hash, seen_at),
+            INDEX idx_client_ip_retention (seen_at),
+            FOREIGN KEY (user_uuid) REFERENCES users(uuid) ON DELETE CASCADE
+        )
     `);
 }
 
@@ -403,6 +420,7 @@ export async function setupAllTables() {
     await setupUserRolesTable();
     await setupRolePermissionsTable();
     await setupUserSettingsTable();
+    await setupUserClientIpsTable();
     await setupDownloadsTable();
     await setupDownloadUploadSettingsTable();
     await setupFileListingSettingsTable();

@@ -13,6 +13,7 @@ import { logEvent } from '../logging/app-logger.ts';
 import { logOperationalEvent } from '../logging/operational-log.ts';
 import { auditStatement, getUserSession, isDuplicateEntry, logApiFailure, logAuditCommitted, requireUser, sendFailure, sendServerFailure, sendSuccess } from './api-shared.ts';
 import { isValidEmail } from './api-validators.ts';
+import { recordClientIp } from '../auth/client-ip.ts';
 
 const SESSION_MAX_AGE = 48 * 60 * 60 * 1000;
 
@@ -103,6 +104,7 @@ async function loginAPIRoute(req: Request, res: Response) {
             },
             auditStatement(res, user.uuid, 'auth.login.succeeded', {}, 'session')
         ]);
+        await recordClientIp(user.uuid, req.ip);
         logAuditCommitted(res, user.uuid, 'auth.login.succeeded', 'session', null);
 
         res.cookie('token', generateSecureToken(sessionData), {

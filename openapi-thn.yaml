@@ -104,6 +104,44 @@ paths:
               schema: { $ref: '#/components/schemas/PlayerStats' }
         '404': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
+  /api/services/players/lookup:
+    put:
+      security: [{ serviceKey: [] }]
+      description: >
+        Looks up a public IP seen on a signed-in website session within 24 hours.
+        Returns 404 for no unambiguous opted-in verified account with stored stats,
+        including shared IPs, multiple verified accounts, and private IPs.
+        Personalisation is disabled by default and requires user opt-in.
+        The JSON body is limited to 1 KiB. Responses must not be cached.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [ip]
+              properties:
+                ip: { type: string, description: IPv4 or IPv6 literal }
+      responses:
+        '200':
+          description: Verified Minecraft name and last online time in epoch milliseconds.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [name, lastSeen]
+                properties:
+                  name: { $ref: '#/components/schemas/Name' }
+                  lastSeen: { type: integer, format: int64, minimum: 0 }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '413': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
   /api/services/players/link:
     put:
       security: [{ serviceKey: [] }]

@@ -16,7 +16,8 @@
     "lint": "eslint .",
     "test:ui": "cross-env TSX_TSCONFIG_PATH=tsconfig.app.json node --import tsx --test tests/button.test.tsx",
     "test:whitelist": "node --import tsx --test tests/whitelist-contract.test.ts",
-    "test:services": "node --import tsx --test tests/service-status-contract.test.ts tests/whitelist-contract.test.ts tests/thn-contract.test.ts"
+    "test:services": "node --import tsx --test tests/service-status-contract.test.ts tests/whitelist-contract.test.ts tests/thn-contract.test.ts tests/player-lookup.test.ts",
+    "test:settings": "node --experimental-test-module-mocks --import tsx --test tests/account-settings.test.ts tests/login-ip.test.ts"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.0.14",

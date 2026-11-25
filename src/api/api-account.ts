@@ -3,6 +3,7 @@ import { hashPassword, verifyPassword } from '@tattyhost/CryptoUtils';
 import { executeTransaction, query } from '@tattyhost/SQLutils';
 import { auditStatement, isDuplicateEntry, logApiFailure, logAuditCommitted, requireUser, sendFailure, sendServerFailure, sendSuccess } from './api-shared.ts';
 import { isValidEmail, isValidTimezone } from './api-validators.ts';
+import { recordClientIp } from '../auth/client-ip.ts';
 
 async function getAccountAPIRoute(_req: Request, res: Response) {
     const session = requireUser(res);
@@ -136,8 +137,9 @@ async function getUserSettingsAPIRoute(_req: Request, res: Response) {
             language: string;
             timezone: string;
             dark_mode: boolean | number | string;
+            personalised_server_list: boolean | number | string;
         }>(
-            'SELECT language, timezone, dark_mode FROM user_settings WHERE user_uuid = ? LIMIT 1',
+            'SELECT language, timezone, dark_mode, personalised_server_list FROM user_settings WHERE user_uuid = ? LIMIT 1',
             [session.userId]
         );
         if (!rows.length) {
@@ -147,7 +149,7 @@ async function getUserSettingsAPIRoute(_req: Request, res: Response) {
             ]);
             logAuditCommitted(res, session.userId, 'account.settings.initialized', 'user', session.userId);
             rows = await query(
-                'SELECT language, timezone, dark_mode FROM user_settings WHERE user_uuid = ? LIMIT 1',
+                'SELECT language, timezone, dark_mode, personalised_server_list FROM user_settings WHERE user_uuid = ? LIMIT 1',
                 [session.userId]
             );
         }
@@ -158,7 +160,9 @@ async function getUserSettingsAPIRoute(_req: Request, res: Response) {
             settings: {
                 language: settings.language,
                 timezone: settings.timezone,
-                darkMode: settings.dark_mode === true || settings.dark_mode === 1 || settings.dark_mode === '1'
+                darkMode: settings.dark_mode === true || settings.dark_mode === 1 || settings.dark_mode === '1',
+                personalisedServerList: settings.personalised_server_list === true ||
+                    settings.personalised_server_list === 1 || settings.personalised_server_list === '1'
             }
         });
     } catch (error) {
@@ -171,7 +175,7 @@ async function updateUserSettingsAPIRoute(req: Request, res: Response) {
     const session = requireUser(res);
     if (!session) return;
 
-    const { language, timezone, darkMode } = req.body || {};
+    const { language, timezone, darkMode, personalisedServerList } = req.body || {};
     if (typeof language !== 'string' || !/^[a-z]{2}(?:-[A-Z]{2})?$/.test(language)) {
         sendFailure(res, 400, 'Ungültige Sprache');
         return;
@@ -184,24 +188,37 @@ async function updateUserSettingsAPIRoute(req: Request, res: Response) {
         sendFailure(res, 400, 'Ungültige Dark-Mode-Einstellung');
         return;
     }
+    if (personalisedServerList !== undefined && typeof personalisedServerList !== 'boolean') {
+        sendFailure(res, 400, 'Ungültige Einstellung für die personalisierte Serverliste');
+        return;
+    }
 
     try {
+        const includesPersonalisation = personalisedServerList !== undefined;
+        const fields = ['language', 'timezone', 'darkMode'];
+        if (includesPersonalisation) fields.push('personalisedServerList');
         await executeTransaction([
             {
-                sql: `INSERT INTO user_settings (user_uuid, language, timezone, dark_mode)
-                      VALUES (?, ?, ?, ?)
+                sql: `INSERT INTO user_settings (user_uuid, language, timezone, dark_mode${includesPersonalisation ? ', personalised_server_list' : ''})
+                      VALUES (?, ?, ?, ?${includesPersonalisation ? ', ?' : ''})
                       ON DUPLICATE KEY UPDATE
                         language = VALUES(language),
                         timezone = VALUES(timezone),
-                        dark_mode = VALUES(dark_mode)`,
-                params: [session.userId, language, timezone, darkMode]
+                        dark_mode = VALUES(dark_mode)${includesPersonalisation ? ', personalised_server_list = VALUES(personalised_server_list)' : ''}`,
+                params: includesPersonalisation
+                    ? [session.userId, language, timezone, darkMode, personalisedServerList]
+                    : [session.userId, language, timezone, darkMode]
             },
+            ...(personalisedServerList === false
+                ? [{ sql: 'DELETE FROM user_client_ips WHERE user_uuid = ?', params: [session.userId] }]
+                : []),
             auditStatement(res, session.userId, 'account.settings.updated', {
-                fields: ['language', 'timezone', 'darkMode']
+                fields
             }, 'user', session.userId)
         ]);
+        if (personalisedServerList === true) await recordClientIp(session.userId, req.ip);
         logAuditCommitted(res, session.userId, 'account.settings.updated', 'user', session.userId, {
-            fields: ['language', 'timezone', 'darkMode']
+            fields
         });
         sendSuccess(res);
     } catch (error) {

@@ -59,9 +59,8 @@ export function I18nProvider({ children, isLoggedIn }: { children: React.ReactNo
                 headers: { 'Content-Type': 'application/json' },
                 credentials: 'include',
                 body: JSON.stringify({
-                    ...settingsData.settings,
-                    ...update,
                     language: update.language || settingsData.settings.language,
+                    timezone: settingsData.settings.timezone,
                     darkMode: typeof update.darkMode === 'boolean' ? update.darkMode : settingsData.settings.darkMode
                 })
             });
