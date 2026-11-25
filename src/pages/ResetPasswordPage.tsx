@@ -1,3 +1,4 @@
+import Button, { ButtonLink } from '../components/Button';
 import { useEffect, useState } from 'react';
 import { useI18n } from '../i18n-context';
 import { useToast } from '../toast-context';
@@ -57,9 +58,9 @@ export default function ResetPasswordPage() {
 
                 {complete ? (
                     <>
-                        <a className="mt-6 inline-flex rounded-xl bg-sky-300 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-sky-200" href="/login">
+                        <ButtonLink variant="primary" className="mt-6" href="/login">
                             {t('Zur Anmeldung')}
-                        </a>
+                        </ButtonLink>
                     </>
                 ) : !token ? (
                     <>
@@ -96,9 +97,9 @@ export default function ResetPasswordPage() {
                                 onChange={(event) => setConfirmation(event.target.value)}
                             />
                         </label>
-                        <button className="w-full rounded-xl bg-sky-300 py-3 font-semibold text-slate-950 transition hover:bg-sky-200 disabled:opacity-60" type="submit" disabled={loading}>
+                        <Button variant="primary" className="w-full" type="submit" disabled={loading}>
                             {loading ? t('Passwort wird gespeichert...') : t('Passwort speichern')}
-                        </button>
+                        </Button>
                     </form>
                 )}
             </div>

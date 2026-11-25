@@ -1,3 +1,4 @@
+import Button from '../components/Button';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SSRAuthState } from '../middleware/check-auth';
 import { useI18n } from '../i18n-context';
@@ -20,7 +21,7 @@ import supporterRoleIcon from '../assets/material-icons/headset.svg';
 import moderatorRoleIcon from '../assets/material-icons/chat-bubbles.svg';
 import adminRoleIcon from '../assets/basics/shield.svg';
 import ThnAdminPanel from '../components/ThnAdminPanel';
-import MinecraftAccountCard, { accountActionClass, type AccountPlayerStats } from '../components/MinecraftAccountCard';
+import MinecraftAccountCard, { type AccountPlayerStats } from '../components/MinecraftAccountCard';
 import refreshIcon from '../assets/material-icons/refresh-button.svg';
 import binIcon from '../assets/material-icons/rubbish-bin-delete-button.svg';
 
@@ -159,19 +160,19 @@ function WhitelistEntryCard({ entry, saving, showRequester, onAction }: Whitelis
                 </div>
                 <div className="flex shrink-0 flex-wrap gap-2">
                     {canApprove && (
-                        <button className="rounded-lg bg-emerald-300 px-3 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50" type="button" disabled={saving} onClick={() => onAction(entry, 'approve')}>
+                        <Button variant="primary" type="button" disabled={saving} onClick={() => onAction(entry, 'approve')}>
                             {t('Annehmen')}
-                        </button>
+                        </Button>
                     )}
                     {canReject && (
-                        <button className="rounded-lg border border-rose-400/20 px-3 py-2 text-sm text-rose-200 disabled:opacity-50" type="button" disabled={saving} onClick={() => onAction(entry, 'reject')}>
+                        <Button variant="danger" type="button" disabled={saving} onClick={() => onAction(entry, 'reject')}>
                             {t('Ablehnen')}
-                        </button>
+                        </Button>
                     )}
                     {canRevoke && (
-                        <button className="rounded-lg border border-rose-400/20 px-3 py-2 text-sm text-rose-200 disabled:opacity-50" type="button" disabled={saving} onClick={() => onAction(entry, 'revoke')}>
+                        <Button variant="danger" type="button" disabled={saving} onClick={() => onAction(entry, 'revoke')}>
                             {t('Widerrufen')}
-                        </button>
+                        </Button>
                     )}
                 </div>
             </div>
@@ -731,16 +732,15 @@ export default function AdminPage({ auth }: AdminPageProps) {
                     <h1 className="theme-text text-3xl font-semibold">{t('Admin Services')}</h1>
                     <p className="theme-muted mt-2">{t('Benutzer, Dateien, Downloads und Serverstatus verwalten.')}</p>
                 </div>
-                <button className="rounded-lg px-4 py-2 text-sm theme-text transition hover:bg-white/5 disabled:opacity-50" onClick={() => void refresh()} disabled={loading || saving}>
+                <Button variant="ghost" onClick={() => void refresh()} disabled={loading || saving}>
                     {t('Aktualisieren')}
-                </button>
+                </Button>
             </div>
 
             <div className="theme-tabs mt-8 flex gap-2 border-b border-[var(--theme-border)]" role="tablist" aria-label={t('Admin-Bereiche')}>
                 {tabs.map((item) => (
-                    <button
-                        key={item.id}
-                        className={`flex shrink-0 items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-sky-400 ${tab === item.id ? 'border-sky-300 theme-text' : 'border-transparent theme-muted hover:bg-[var(--theme-section)] hover:text-sky-200'}`}
+                    <Button
+                        key={item.id} variant="tab"
                         type="button"
                         role="tab"
                         aria-selected={tab === item.id}
@@ -748,15 +748,14 @@ export default function AdminPage({ auth }: AdminPageProps) {
                     >
                         <img className="material-icon h-5 w-5" src={item.icon} alt="" />
                         {item.label}
-                    </button>
+                    </Button>
                 ))}
             </div>
 
             {tab === 'thn' && <ThnAdminPanel services={savedServices} onRefreshServices={refreshSavedServices} />}
             {tab === 'services' && (
                 <div className="mt-3 flex justify-end gap-2">
-                    <button
-                        className={`rounded-lg p-2 transition hover:bg-white/5 ${showServiceInfo ? 'bg-white/10' : ''}`}
+                    <Button variant="icon"
                         type="button"
                         aria-label={t('Service-Information')}
                         aria-expanded={showServiceInfo}
@@ -765,9 +764,8 @@ export default function AdminPage({ auth }: AdminPageProps) {
                         onClick={() => setShowServiceInfo((visible) => !visible)}
                     >
                         <img className="h-5 w-5 material-icon" src={infoIcon} alt="" />
-                    </button>
-                    <button
-                        className={`rounded-lg p-2 transition hover:bg-white/5 ${showServiceForm ? 'bg-white/10' : ''}`}
+                    </Button>
+                    <Button variant="icon"
                         type="button"
                         aria-label={t('Service hinzufügen')}
                         aria-expanded={showServiceForm}
@@ -776,7 +774,7 @@ export default function AdminPage({ auth }: AdminPageProps) {
                         onClick={() => setShowServiceForm((visible) => !visible)}
                     >
                         <img className="h-5 w-5 material-icon" src={addIcon} alt="" />
-                    </button>
+                    </Button>
                 </div>
             )}
 
@@ -812,9 +810,8 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                 }}
                             >
                                 <input className="theme-input min-w-0 flex-1 rounded-lg border px-3 py-2 text-sm" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('Benutzername oder E-Mail suchen')} />
-                                <button className="rounded-lg bg-sky-300 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50" disabled={saving}>{t('Suchen')}</button>
-                                <button
-                                    className={`rounded-lg p-2 transition hover:bg-white/5 ${showUserLegend ? 'bg-white/10' : ''}`}
+                                <Button variant="primary" disabled={saving}>{t('Suchen')}</Button>
+                                <Button variant="icon"
                                     type="button"
                                     aria-label={t('Legende')}
                                     aria-expanded={showUserLegend}
@@ -822,7 +819,7 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                     onClick={() => setShowUserLegend((visible) => !visible)}
                                 >
                                     <img className="h-5 w-5 material-icon" src={infoIcon} alt="" />
-                                </button>
+                                </Button>
                             </form>
                             {showUserLegend && (
                                 <div className="theme-panel mb-5 grid gap-5 rounded-xl border p-4 sm:grid-cols-2">
@@ -860,9 +857,8 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                     ].filter((item) => item !== false);
                                     return (
                                         <article key={user.uuid} className="theme-panel rounded-xl border p-4">
-                                            <div className="flex items-center gap-4">
-                                                <button
-                                                    className={`shrink-0 rounded-lg p-2 transition hover:bg-white/5 ${infoUserId === user.uuid ? 'bg-white/10' : ''}`}
+                                            <div className="flex flex-wrap items-center gap-3 sm:gap-4">
+                                                <Button variant="icon"
                                                     type="button"
                                                     aria-label={t('Whitelist und Minecraft-Informationen von {username}', { username: user.username })}
                                                     aria-expanded={infoUserId === user.uuid}
@@ -870,21 +866,24 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                                     onClick={() => toggleUserInfo(user)}
                                                 >
                                                     <img className="h-5 w-5 material-icon" src={infoIcon} alt="" />
-                                                </button>
-                                                <img className="h-6 w-6 shrink-0 material-icon" src={roleIcons[user.role]} alt={roleLabels[user.role]} title={roleLabels[user.role]} />
+                                                </Button>
                                                 <div className="min-w-0 flex-1">
                                                     <h2 className="theme-text font-semibold">{user.username}</h2>
                                                     <p className="theme-muted break-all text-sm">{user.email}</p>
                                                 </div>
-                                                <div className="flex shrink-0 items-center gap-3">
+                                                <div className="flex flex-wrap items-center gap-3">
+                                                    <span className="theme-muted inline-flex items-center gap-1.5 text-sm">
+                                                        <img className="h-5 w-5 shrink-0 material-icon" src={roleIcons[user.role]} alt="" />
+                                                        {roleLabels[user.role]}
+                                                    </span>
                                                     <span className="flex items-center gap-1.5">
                                                         {userPermissions.map((item) => (
                                                             <img key={item.label} className="h-5 w-5 material-icon" src={item.icon} alt={t(item.label)} title={t(item.label)} />
                                                         ))}
                                                     </span>
-                                                    <button className="rounded-lg border border-rose-400/20 px-3 py-2 text-sm text-rose-200 transition hover:bg-rose-400/10 disabled:opacity-50" disabled={saving || isSelf} onClick={() => deleteUser(user)}>
+                                                    <Button variant="danger" disabled={saving || isSelf} onClick={() => deleteUser(user)}>
                                                         {t('Löschen')}
-                                                    </button>
+                                                    </Button>
                                                 </div>
                                             </div>
                                             {infoUserId === user.uuid && (
@@ -908,8 +907,7 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                                             <input type="checkbox" checked={user.has_file_access} disabled={saving} onChange={(event) => void updateUserFileAccess(user, event.target.checked)} />
                                                             {t('Dateizugriff')}
                                                         </label>
-                                                        <button
-                                                            className="rounded-lg border px-3 py-2 text-sm theme-text transition hover:bg-white/5 disabled:opacity-50"
+                                                        <Button
                                                             type="button"
                                                             disabled={saving}
                                                             onClick={() => {
@@ -918,7 +916,7 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                                             }}
                                                         >
                                                             {t('Passwort-Reset')}
-                                                        </button>
+                                                        </Button>
                                                     </div>
                                                     <h3 className="theme-text text-sm font-semibold">{t('Minecraft-Konten')}</h3>
                                                     {!userMinecraftAccounts.length && (
@@ -926,8 +924,7 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                                     )}
                                                     {userMinecraftAccounts.map((account) => (
                                                         <MinecraftAccountCard key={`${user.uuid}-${account.player_uuid}`} name={account.player_name} uuid={account.player_uuid} verified={account.verified} stats={account.stats} skinUrl={`/api/admin/users/${encodeURIComponent(user.uuid)}/minecraft/${encodeURIComponent(account.player_uuid)}/skin`}>
-                                                                <button
-                                                                    className={accountActionClass}
+                                                                <Button
                                                                     type="button"
                                                                     disabled={saving}
                                                                     title={t('Aktuellen Namen von Mojang laden')}
@@ -938,9 +935,8 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                                                     )}
                                                                 >
                                                                     <img src={refreshIcon} className="material-icon h-4 w-4" alt="" />{t('Name aktualisieren')}
-                                                                </button>
-                                                                <button
-                                                                    className="inline-flex min-h-10 items-center gap-2 rounded-xl px-3 py-2 text-sm text-rose-500 transition hover:bg-rose-500/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-500 disabled:opacity-50"
+                                                                </Button>
+                                                                <Button variant="danger"
                                                                     type="button"
                                                                     disabled={saving}
                                                                     onClick={() => {
@@ -953,7 +949,7 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                                                     }}
                                                                 >
                                                                     <img src={binIcon} className="material-icon h-4 w-4" alt="" />{t('Entfernen')}
-                                                                </button>
+                                                                </Button>
                                                         </MinecraftAccountCard>
                                                     ))}
                                                     <form
@@ -978,12 +974,11 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                                             placeholder={t('Minecraft-Name')}
                                                             aria-label={t('Minecraft-Name')}
                                                         />
-                                                        <button
-                                                            className="rounded-lg border px-3 py-2 text-sm theme-text transition hover:bg-white/5 disabled:opacity-50"
+                                                        <Button
                                                             disabled={saving || !newMinecraftName.trim()}
                                                         >
                                                             {t('Konto hinzufügen')}
-                                                        </button>
+                                                        </Button>
                                                     </form>
                                                     <h3 className="theme-text text-sm font-semibold">{t('Whitelist und Minecraft-Informationen')}</h3>
                                                     <form
@@ -1030,12 +1025,11 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                                                 <option key={account.player_uuid} value={account.player_name} />
                                                             ))}
                                                         </datalist>
-                                                        <button
-                                                            className="rounded-lg border px-3 py-2 text-sm theme-text transition hover:bg-white/5 disabled:opacity-50"
+                                                        <Button
                                                             disabled={saving || !grantServiceId || !grantName.trim()}
                                                         >
                                                             {t('Auf Whitelist setzen')}
-                                                        </button>
+                                                        </Button>
                                                     </form>
                                                     {!userWhitelistEntries.length && !userWhitelistHistory.length && (
                                                         <p className="theme-muted text-sm">{t('Keine Whitelist-Anträge von diesem Benutzer.')}</p>
@@ -1061,14 +1055,13 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                                     <p className="theme-muted text-sm">
                                                         {t('Der Link ist eine Stunde gültig und kann nur einmal verwendet werden. Eine Wunsch-E-Mail ändert nicht die E-Mail-Adresse des Kontos.')}
                                                     </p>
-                                                    <button
-                                                        className="rounded-lg bg-sky-300 px-3 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50"
+                                                    <Button variant="primary"
                                                         type="button"
                                                         disabled={saving}
                                                         onClick={() => void sendPasswordReset(user)}
                                                     >
                                                         {t('An Konto-E-Mail senden')}
-                                                    </button>
+                                                    </Button>
                                                     <div className="flex flex-col gap-2 sm:flex-row">
                                                         <label className="sr-only" htmlFor={`reset-email-${user.uuid}`}>{t('Wunsch-E-Mail')}</label>
                                                         <input
@@ -1080,14 +1073,13 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                                             onChange={(event) => setPasswordResetEmail(event.target.value)}
                                                             placeholder={t('Wunsch-E-Mail (optional)')}
                                                         />
-                                                        <button
-                                                            className="rounded-lg border px-3 py-2 text-sm theme-text disabled:opacity-50"
+                                                        <Button
                                                             type="button"
                                                             disabled={saving || !passwordResetEmail.trim()}
                                                             onClick={() => void sendPasswordReset(user, passwordResetEmail.trim())}
                                                         >
                                                             {t('An Wunsch-E-Mail senden')}
-                                                        </button>
+                                                        </Button>
                                                     </div>
                                                 </div>
                                             )}
@@ -1139,9 +1131,9 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                             />
                                         </label>
                                     </div>
-                                    <button className="rounded-lg bg-sky-300 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50" type="submit" disabled={saving}>
+                                    <Button variant="primary" type="submit" disabled={saving}>
                                         {t('Regeln speichern')}
-                                    </button>
+                                    </Button>
                                 </form>
                             )}
                         </div>
@@ -1169,12 +1161,11 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                 <p className="theme-muted flex-1 text-sm">
                                     {t('Erlaubter Bereich: 1 bis 512 MB. Der Standardwert beträgt 16 MB.')}
                                 </p>
-                                <button
-                                    className="rounded-lg border px-4 py-2 text-sm theme-text disabled:opacity-50"
+                                <Button
                                     disabled={saving || maxUploadMb < 1 || maxUploadMb > 512}
                                 >
                                     {t('Upload-Limit speichern')}
-                                </button>
+                                </Button>
                             </form>
 
                             <form className="theme-panel grid gap-3 rounded-2xl border p-5" onSubmit={uploadDownload}>
@@ -1210,12 +1201,11 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                     placeholder={t('Beschreibung (optional)')}
                                     maxLength={2000}
                                 />
-                                <button
-                                    className="w-fit rounded-lg bg-sky-300 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50"
+                                <Button variant="primary" className="w-fit"
                                     disabled={saving || !uploadFile}
                                 >
                                     {t('Datei hochladen')}
-                                </button>
+                                </Button>
                             </form>
 
                             <form className="theme-panel grid gap-3 rounded-2xl border p-5" onSubmit={createDownload}>
@@ -1223,7 +1213,7 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                 <input className="theme-input rounded-lg border px-3 py-2 text-sm" value={newDownload.title} onChange={(event) => setNewDownload({ ...newDownload, title: event.target.value })} placeholder={t('Titel')} maxLength={128} required />
                                 <textarea className="theme-input min-h-20 rounded-lg border px-3 py-2 text-sm" value={newDownload.description} onChange={(event) => setNewDownload({ ...newDownload, description: event.target.value })} placeholder={t('Beschreibung (optional)')} maxLength={2000} />
                                 <input className="theme-input rounded-lg border px-3 py-2 text-sm" type="url" value={newDownload.url} onChange={(event) => setNewDownload({ ...newDownload, url: event.target.value })} placeholder="https://..." required />
-                                <button className="w-fit rounded-lg bg-sky-300 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50" disabled={saving}>{t('Hinzufügen')}</button>
+                                <Button variant="primary" className="w-fit" disabled={saving}>{t('Hinzufügen')}</Button>
                             </form>
                             <div className="space-y-4">
                                 {downloads.map((download) => (
@@ -1249,8 +1239,8 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                                 {t('Öffentlich im Mitgliederbereich')}
                                             </label>
                                             <div className="flex gap-2">
-                                                <button className="rounded-lg bg-sky-300 px-3 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50" disabled={saving} onClick={() => void saveDownload(download)}>{t('Speichern')}</button>
-                                                <button className="rounded-lg border border-rose-400/20 px-3 py-2 text-sm text-rose-200 disabled:opacity-50" disabled={saving} onClick={() => deleteDownload(download)}>{t('Löschen')}</button>
+                                                <Button variant="primary" disabled={saving} onClick={() => void saveDownload(download)}>{t('Speichern')}</Button>
+                                                <Button variant="danger" disabled={saving} onClick={() => deleteDownload(download)}>{t('Löschen')}</Button>
                                             </div>
                                         </div>
                                     </article>
@@ -1371,13 +1361,12 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                     </label>}
                                     {newService.serviceType === 'minecraft' && <label className="theme-muted flex items-center gap-2 text-sm sm:col-span-2"><input type="checkbox" checked={newService.thnlinkEnabled} onChange={(event) => setNewService((current) => ({ ...current, thnlinkEnabled: event.target.checked }))} />{t('THNLink aktivieren')}</label>}
                                     {newService.serviceType === 'minecraft' && <p className="theme-muted text-xs sm:col-span-2">{t('Minecraft-Whitelists verwenden Spielernamen und UUIDs. THNLink aktiviert Spielerstatistiken und Backups.')}</p>}
-                                    <button
-                                        className="w-fit rounded-lg bg-sky-300 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50 sm:col-span-2"
+                                    <Button variant="primary" className="w-fit sm:col-span-2"
                                         type="submit"
                                         disabled={saving}
                                     >
                                         {t('Service hinzufügen und API-Schlüssel erstellen')}
-                                    </button>
+                                    </Button>
                                 </form>
                             )}
                             {services.map((service) => (
@@ -1438,30 +1427,27 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                             {t('API-Schlüssel: {status}', { status: service.apiKeyConfigured ? t('Aktiv') : t('Nicht eingerichtet') })}
                                             {service.apiKeyCreatedAt && ` · ${t('erstellt')} ${new Date(service.apiKeyCreatedAt).toLocaleString(language === 'de' ? 'de-DE' : 'en-US')}`}
                                         </span>
-                                        <button
-                                            className="rounded-lg border px-3 py-2 text-sm theme-text disabled:opacity-50"
+                                        <Button
                                             type="button"
                                             disabled={saving}
                                             onClick={() => void rotateServiceApiKey(service)}
                                         >
                                             {service.apiKeyConfigured ? t('Schlüssel neu erstellen') : t('Schlüssel erstellen')}
-                                        </button>
-                                        <button
-                                            className="rounded-lg bg-sky-300 px-3 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50"
+                                        </Button>
+                                        <Button variant="primary"
                                             type="button"
                                             disabled={saving}
                                             onClick={() => void saveService(service)}
                                         >
                                             {t('Service speichern')}
-                                        </button>
-                                        <button
-                                            className="rounded-lg border border-rose-400/20 px-3 py-2 text-sm text-rose-200 disabled:opacity-50"
+                                        </Button>
+                                        <Button variant="danger"
                                             type="button"
                                             disabled={saving}
                                             onClick={() => deleteService(service)}
                                         >
                                             {t('Service löschen')}
-                                        </button>
+                                        </Button>
                                     </div>
                                     {revealedServiceApiKeys[service.id] && (
                                         <div className="space-y-2 sm:col-span-2">
@@ -1475,16 +1461,14 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                                 readOnly
                                                 onFocus={(event) => event.currentTarget.select()}
                                             />
-                                            <button
-                                                className="rounded-lg border px-3 py-2 text-sm theme-text disabled:opacity-50"
+                                            <Button
                                                 type="button"
                                                 disabled={saving}
                                                 onClick={() => void copyServiceApiKey(service.id)}
                                             >
                                                 {t('Schlüssel kopieren')}
-                                            </button>
-                                            <button
-                                                className="ml-2 rounded-lg border px-3 py-2 text-sm theme-muted"
+                                            </Button>
+                                            <Button className="ml-2"
                                                 type="button"
                                                 onClick={() => setRevealedServiceApiKeys((current) => {
                                                     const remaining = { ...current };
@@ -1493,7 +1477,7 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                                 })}
                                             >
                                                 {t('Ausblenden')}
-                                            </button>
+                                            </Button>
                                         </div>
                                     )}
                                 </article>

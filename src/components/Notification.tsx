@@ -1,3 +1,4 @@
+import Button from './Button';
 import { useEffect } from 'react';
 import closeIcon from '../assets/material-icons/close-button.svg';
 import { useI18n } from '../i18n-context';
@@ -41,13 +42,12 @@ function ToastItem({ notification, onRemove, duration }: {
             role={type === 'error' ? 'alert' : 'status'}
         >
             <span>{t(message, values)}</span>
-            <button
-                onClick={() => onRemove(id)}
-                className="shrink-0 rounded p-1 text-white/80 hover:bg-white/10 hover:text-white"
+            <Button
+                onClick={() => onRemove(id)} variant="icon" className="shrink-0 text-white/80"
                 aria-label={t('Schließen')}
             >
                 <img src={closeIcon} alt="" className="material-icon h-4 w-4 cursor-pointer" />
-            </button>
+            </Button>
         </div>
     );
 }

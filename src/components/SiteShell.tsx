@@ -1,3 +1,4 @@
+import Button, { ButtonLink } from './Button';
 import { useEffect, useState } from 'react';
 import logo from '../assets/logos/logo3.svg';
 import settingsIcon from '../assets/material-icons/settings-cogwheel-button.svg';
@@ -44,12 +45,11 @@ function CookieNotice() {
                 </p>
             </div>
             <div className="mt-4 flex flex-wrap gap-2 sm:mt-0">
-                <button
-                    className="rounded-lg bg-sky-400 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-sky-300"
+                <Button variant="primary"
                     onClick={dismiss}
                 >
                     {t('Verstanden')}
-                </button>
+                </Button>
             </div>
         </aside>
     );
@@ -173,15 +173,14 @@ export default function SiteShell({ children, activePage, auth }: SiteShellProps
                                     <option value="de">DE</option>
                                     <option value="en">EN</option>
                                 </select>
-                                <button
-                                    className="theme-text grid h-9 w-9 place-items-center rounded-lg border transition hover:bg-white/10"
+                                <Button variant="icon"
                                     type="button"
                                     onClick={() => void updateTheme()}
                                     aria-label={t(darkMode ? 'Zum Hellmodus wechseln' : 'Zum Dunkelmodus wechseln')}
                                     title={t(darkMode ? 'Hell' : 'Dunkel')}
                                 >
                                     <img className="material-icon h-5 w-5" src={darkMode ? sunIcon : themeIcon} alt="" />
-                                </button>
+                                </Button>
                             </>
                         )}
                         <nav
@@ -215,8 +214,8 @@ export default function SiteShell({ children, activePage, auth }: SiteShellProps
                         </nav>
                         {isLoggedIn ? (
                             <div className="relative sm:ml-3">
-                                <button
-                                    className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition hover:bg-white/10 ${activePage === 'settings' ? 'border-sky-300/40 bg-white/10 text-white' : 'border-white/10 bg-white/[0.06] text-white'}`}
+                                <Button
+                                    className={activePage === 'settings' ? 'border-sky-300/40 bg-[var(--theme-section)]' : ''}
                                     type="button"
                                     aria-haspopup="menu"
                                     aria-expanded={profileOpen}
@@ -224,7 +223,7 @@ export default function SiteShell({ children, activePage, auth }: SiteShellProps
                                 >
                                     <img className="material-icon h-5 w-5" src={settingsIcon} alt="" />
                                     <span>{t('Profil')}</span>
-                                </button>
+                                </Button>
                                 {profileOpen && (
                                     <div className="theme-panel absolute right-0 top-full z-30 mt-2 w-52 rounded-xl border p-1.5 shadow-2xl shadow-black/50" role="menu">
                                         {hasFileAccess && (
@@ -253,35 +252,33 @@ export default function SiteShell({ children, activePage, auth }: SiteShellProps
                                             </a>
                                         )}
                                         <div className="my-1 border-t border-white/[0.08]" />
-                                        <button
-                                            className="w-full rounded-lg px-3 py-2.5 text-left text-sm text-rose-300 transition hover:bg-rose-400/10 disabled:opacity-60"
+                                        <Button variant="ghost" className="w-full justify-start"
                                             type="button"
                                             onClick={logout}
                                             disabled={loggingOut}
                                             role="menuitem"
                                         >
                                             {loggingOut ? t('Abmelden...') : t('Logout')}
-                                        </button>
+                                        </Button>
                                     </div>
                                 )}
                             </div>
                         ) : (
-                            <a
-                                className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${activePage === 'login' ? 'bg-sky-300 text-black' : 'bg-white/[0.06] text-white hover:bg-white/10'}`}
+                            <ButtonLink
+                                variant={activePage === 'login' ? 'primary' : 'normal'}
                                 href="/login"
                             >
                                 {t('Anmelden')}
-                            </a>
+                            </ButtonLink>
                         )}
-                        <button
-                            className="grid h-10 w-10 place-items-center rounded-lg border border-white/10 text-zinc-300 hover:bg-white/5 sm:hidden"
+                        <Button variant="icon" className="sm:hidden"
                             type="button"
                             aria-label={t(menuOpen ? 'Menü schließen' : 'Menü öffnen')}
                             aria-expanded={menuOpen}
                             onClick={() => setMenuOpen((open) => !open)}
                         >
                             <img className="material-icon h-5 w-5" src={menuOpen ? closeIcon : menuIcon} alt="" />
-                        </button>
+                        </Button>
                     </div>
                 </div>
             </header>

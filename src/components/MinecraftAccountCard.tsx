@@ -29,8 +29,6 @@ type Props = {
     notice?: ReactNode;
 };
 
-export const accountActionClass = 'inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-[var(--theme-border)] px-3 py-2 text-sm font-medium theme-text transition hover:border-sky-400/60 hover:bg-sky-400/10 active:scale-[0.98] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none';
-
 export default function MinecraftAccountCard({ name, uuid, verified, stats, skinUrl, children, notice }: Props) {
     const { t, language } = useI18n();
     const [skinFailed, setSkinFailed] = useState(false);

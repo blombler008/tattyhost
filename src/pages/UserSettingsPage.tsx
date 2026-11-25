@@ -1,3 +1,4 @@
+import Button from '../components/Button';
 import { useEffect, useState, type FormEvent } from 'react';
 import { useI18n } from '../i18n-context';
 import { useToast } from '../toast-context';
@@ -200,9 +201,8 @@ export default function UserSettingsPage() {
                 <div className="mt-8 space-y-8">
                     <div className="theme-tabs flex gap-2 border-b border-[var(--theme-border)]" role="tablist" aria-label={t('Profil-Einstellungen')}>
                         {accountTabs.map((item) => (
-                            <button
-                                key={item.id}
-                                className={`flex shrink-0 items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-sky-400 ${tab === item.id ? 'border-sky-300 theme-text' : 'border-transparent theme-muted hover:bg-[var(--theme-section)] hover:text-sky-200'}`}
+                            <Button
+                                key={item.id} variant="tab"
                                 type="button"
                                 role="tab"
                                 aria-selected={tab === item.id}
@@ -210,7 +210,7 @@ export default function UserSettingsPage() {
                             >
                                 <img className="h-5 w-5 material-icon" src={item.icon} alt="" />
                                 {t(item.label)}
-                            </button>
+                            </Button>
                         ))}
                     </div>
                     {tab === 'server' && <ServerTab />}
@@ -248,12 +248,11 @@ export default function UserSettingsPage() {
                             <p className="text-xs theme-muted">
                                 {t('E-Mail-Änderungen werden sofort übernommen; eine Bestätigungs-E-Mail ist derzeit nicht eingerichtet.')}
                             </p>
-                            <button
-                                className="rounded-xl bg-sky-300 px-5 py-3 text-sm font-semibold text-black transition hover:bg-sky-200 disabled:opacity-60"
+                            <Button variant="primary"
                                 disabled={savingEmail}
                             >
                                 {savingEmail ? t('Speichern...') : t('E-Mail speichern')}
-                            </button>
+                            </Button>
                         </form>
 
                         <form className="mt-8 space-y-4 border-t border-[var(--theme-border)] pt-6" onSubmit={savePassword}>
@@ -297,12 +296,11 @@ export default function UserSettingsPage() {
                                     />
                                 </label>
                             </div>
-                            <button
-                                className="rounded-xl bg-sky-300 px-5 py-3 text-sm font-semibold text-black transition hover:bg-sky-200 disabled:opacity-60"
+                            <Button variant="primary"
                                 disabled={savingPassword}
                             >
                                 {savingPassword ? t('Speichern...') : t('Passwort speichern')}
-                            </button>
+                            </Button>
                         </form>
                     </section>
 
@@ -359,13 +357,12 @@ export default function UserSettingsPage() {
                         />
                     </label>
 
-                    <button
-                        className="rounded-xl bg-sky-300 px-5 py-3 text-sm font-semibold text-black transition hover:bg-sky-200 disabled:cursor-not-allowed disabled:opacity-60"
+                    <Button variant="primary"
                         type="submit"
                         disabled={saving}
                     >
                         {saving ? t('Speichern...') : t('Änderungen speichern')}
-                    </button>
+                    </Button>
                     </form>
                     <DeleteAccountSection />
                     </>}

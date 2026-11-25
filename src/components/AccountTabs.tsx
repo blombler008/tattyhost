@@ -1,9 +1,10 @@
+import Button from './Button';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import binIcon from '../assets/material-icons/rubbish-bin-delete-button.svg';
 import addIcon from '../assets/material-icons/round-add-button.svg';
 import { useI18n } from '../i18n-context';
 import { useToast } from '../toast-context';
-import MinecraftAccountCard, { accountActionClass, type AccountPlayerStats } from './MinecraftAccountCard';
+import MinecraftAccountCard, { type AccountPlayerStats } from './MinecraftAccountCard';
 import refreshIcon from '../assets/material-icons/refresh-button.svg';
 import linkIcon from '../assets/material-icons/check-symbol.svg';
 
@@ -89,14 +90,13 @@ export function ServerTab() {
                                 <span className={`rounded-full px-3 py-1 text-xs font-medium ${statusStyles[request.status]}`}>
                                     {t(statusLabels[request.status])}
                                 </span>
-                                <button
-                                    className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-rose-300 transition hover:bg-white/5"
+                                <Button variant="danger"
                                     type="button"
                                     onClick={() => void removeEntry(request)}
                                 >
                                     <img className="material-icon h-5 w-5" src={binIcon} alt="" />
                                     {t(request.status === 'approved' ? 'Von Whitelist entfernen' : 'Entfernen')}
-                                </button>
+                                </Button>
                             </span>
                         </li>
                     ))}
@@ -228,21 +228,20 @@ export function MinecraftTab() {
                     {accounts.map((account) => (
                         <li key={account.player_uuid}>
                             <MinecraftAccountCard name={account.player_name} uuid={account.player_uuid} verified={account.verified} stats={stats[account.player_uuid] || (account.verified && statsUnavailable[account.player_uuid] ? null : undefined)} skinUrl={`/api/account/minecraft/${encodeURIComponent(account.player_uuid)}/skin`} notice={!account.verified && linkCode?.uuid === account.player_uuid && <p className="theme-subsection theme-text mt-4 rounded-xl border p-3 text-sm">{t('Im Spiel innerhalb von 10 Minuten eingeben:')} <code>/link {linkCode.code}</code></p>}>
-                            <button className={accountActionClass} type="button" onClick={() => void (account.verified ? loadStats(account) : createCode(account))}>
+                            <Button type="button" onClick={() => void (account.verified ? loadStats(account) : createCode(account))}>
                                 <img className="material-icon h-4 w-4" src={account.verified ? refreshIcon : linkIcon} alt="" />
                                 {t(account.verified ? 'Spielzeit anzeigen' : 'Im Spiel verifizieren')}
-                            </button>
+                            </Button>
                             {!account.verified && linkCode?.uuid === account.player_uuid && (
-                                <button className={accountActionClass} type="button" onClick={() => void load()}><img className="material-icon h-4 w-4" src={refreshIcon} alt="" />{t('Verifizierung aktualisieren')}</button>
+                                <Button type="button" onClick={() => void load()}><img className="material-icon h-4 w-4" src={refreshIcon} alt="" />{t('Verifizierung aktualisieren')}</Button>
                             )}
-                            <button
-                                className="inline-flex min-h-10 items-center gap-2 rounded-xl px-3 py-2 text-sm text-rose-500 transition hover:bg-rose-500/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-500"
+                            <Button variant="danger"
                                 type="button"
                                 onClick={() => void remove(account)}
                             >
                                 <img className="material-icon h-5 w-5" src={binIcon} alt="" />
                                 {t('Entfernen')}
-                            </button>
+                            </Button>
                             </MinecraftAccountCard>
                         </li>
                     ))}
@@ -258,13 +257,12 @@ export function MinecraftTab() {
                     aria-label={t('Minecraft-Name')}
                     required
                 />
-                <button
-                    className="flex items-center justify-center gap-2 rounded-xl bg-sky-300 px-5 py-3 text-sm font-semibold text-black transition hover:bg-sky-200 disabled:opacity-60"
+                <Button variant="primary"
                     disabled={adding || !playerName.trim()}
                 >
                     <img className="h-5 w-5 brightness-0" src={addIcon} alt="" />
                     {t('Konto hinzufügen')}
-                </button>
+                </Button>
             </form>
         </section>
     );
@@ -314,13 +312,12 @@ export function DeleteAccountSection() {
             {step === 0 ? (
                 <>
                     <p className="mt-2 text-sm theme-muted">{t('Dein Konto und alle zugehörigen Daten werden dauerhaft gelöscht.')}</p>
-                    <button
-                        className="mt-4 flex items-center gap-2 rounded-xl bg-rose-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-rose-400"
+                    <Button variant="danger" className="mt-4"
                         type="button"
                         onClick={() => setStep(1)}
                     >
                         {t('Konto löschen')}
-                    </button>
+                    </Button>
                 </>
             ) : (
                 <form className="mt-2 space-y-4" onSubmit={(event) => void deleteAccount(event)}>
@@ -341,28 +338,25 @@ export function DeleteAccountSection() {
                         />
                     )}
                     <div className="flex gap-2">
-                        <button
-                            className="rounded-xl border px-5 py-3 text-sm theme-text transition hover:bg-white/5"
+                        <Button
                             type="button"
                             onClick={() => { setStep(0); setPassword(''); }}
                         >
                             {t('Abbrechen')}
-                        </button>
+                        </Button>
                         {step < DELETE_STEPS ? (
-                            <button
-                                className="rounded-xl bg-rose-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-rose-400"
+                            <Button variant="danger"
                                 type="button"
                                 onClick={() => setStep(step + 1)}
                             >
                                 {t('Ja, fortfahren')}
-                            </button>
+                            </Button>
                         ) : (
-                            <button
-                                className="rounded-xl bg-rose-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-rose-400 disabled:opacity-60"
+                            <Button variant="danger"
                                 disabled={deleting || !password}
                             >
                                 {t('Konto endgültig löschen')}
-                            </button>
+                            </Button>
                         )}
                     </div>
                 </form>

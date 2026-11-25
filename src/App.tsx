@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import Button from './components/Button';
+import Button, { ButtonLink } from './components/Button';
 import SiteShell from './components/SiteShell';
 import { queueToastForNextPage, useToast } from './toast-context';
 import ToastProvider from './components/ToastProvider';
@@ -120,20 +120,18 @@ function LoginPage() {
                         required
                     />
                 </label>
-                <button
-                    className="w-full rounded-xl bg-sky-300 py-3 font-semibold text-black transition hover:bg-sky-200 disabled:cursor-not-allowed disabled:opacity-60"
+                <Button variant="primary" className="w-full"
                     type="submit"
                     disabled={submitting}
                 >
                     {submitting ? t('Bitte warten...') : mode === 'login' ? t('Anmelden') : t('Registrieren')}
-                </button>
-                <button
-                    className="mt-4 w-full cursor-pointer text-sm text-sky-200 hover:text-white"
+                </Button>
+                <Button variant="ghost" className="mt-4 w-full"
                     type="button"
                     onClick={() => setMode(mode === 'login' ? 'register' : 'login')}
                 >
                     {mode === 'login' ? t('Noch kein Account? Registrieren') : t('Bereits Account? Anmelden')}
-                </button>
+                </Button>
             </form>
         </section>
     );
@@ -152,9 +150,9 @@ function ComingSoonPage({ pathname }: { pathname: string }) {
             <p className="text-sm font-medium uppercase tracking-[0.16em] text-sky-200">Tattyhost</p>
             <h1 className="theme-text mt-3 text-3xl font-semibold">{pageName}</h1>
             <p className="theme-muted mt-4">{t('Diese Seite bauen wir als Nächstes. Schau dich inzwischen auf der Startseite um.')}</p>
-            <a className="mt-7 inline-flex rounded-xl bg-sky-300 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-sky-200" href="/">
+            <ButtonLink variant="primary" className="mt-7" href="/">
                 {t('Zur Startseite')}
-            </a>
+            </ButtonLink>
         </section>
     );
 }

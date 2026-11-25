@@ -1,5 +1,12 @@
 # React + TypeScript + Vite
 
+## UI controls
+
+Use the shared `Button` component for actions and `ButtonLink` for links styled
+as actions. Variants are `primary`, `normal`, `danger`, `ghost`, `icon`, and
+`tab`; use `danger` for destructive actions and preserve native button types
+for form submissions. Run `npm run test:ui` for the shared control tests.
+
 ## Production startup
 
 On the Linux server, install dependencies (including development dependencies,

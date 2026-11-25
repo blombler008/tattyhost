@@ -1,3 +1,4 @@
+import Button, { ButtonLink } from './Button';
 import { useEffect, useState } from 'react';
 import { useI18n } from '../i18n-context';
 import { useToast } from '../toast-context';
@@ -83,12 +84,12 @@ export default function WhitelistRequestDialog({ serviceId, serviceName, isLogge
                             {t('Du musst eingeloggt sein, um eine Whitelist zu beantragen. Bitte melde dich an oder registriere dich.')}
                         </p>
                         <div className="mt-5 flex justify-end gap-2">
-                            <button className="rounded-lg border px-4 py-2 text-sm theme-text transition hover:bg-white/5" type="button" onClick={onClose}>
+                            <Button type="button" onClick={onClose}>
                                 {t('Abbrechen')}
-                            </button>
-                            <a className="rounded-lg bg-sky-300 px-4 py-2 text-sm font-semibold text-slate-950" href="/login">
+                            </Button>
+                            <ButtonLink variant="primary" href="/login">
                                 {t('Zum Login / Registrieren')}
-                            </a>
+                            </ButtonLink>
                         </div>
                     </>
                 ) : (
@@ -129,16 +130,15 @@ export default function WhitelistRequestDialog({ serviceId, serviceName, isLogge
                             />
                         </div>
                         <div className="flex justify-end gap-2">
-                            <button className="rounded-lg border px-4 py-2 text-sm theme-text transition hover:bg-white/5" type="button" onClick={onClose}>
+                            <Button type="button" onClick={onClose}>
                                 {t('Abbrechen')}
-                            </button>
-                            <button
-                                className="rounded-lg bg-sky-300 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50"
+                            </Button>
+                            <Button variant="primary"
                                 type="submit"
                                 disabled={submitting || !playerName.trim() || !reason.trim()}
                             >
                                 {t('Antrag senden')}
-                            </button>
+                            </Button>
                         </div>
                     </form>
                 )}

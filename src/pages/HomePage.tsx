@@ -1,3 +1,4 @@
+import { ButtonLink } from '../components/Button';
 import serverIcon from '../assets/material-icons/web-server.svg';
 import { useServiceStatus, type Service } from '../hooks/use-service-status';
 import { useI18n } from '../i18n-context';
@@ -29,17 +30,16 @@ export default function HomePage() {
                             {t('Willkommen auf dem Tattyhost Netzwerk — ein kleiner Treffpunkt für unsere Community. Such dir deinen Server aus und schau bei uns vorbei.')}
                         </p>
                         <div className="mt-8 flex flex-wrap gap-3">
-                            <a
-                                className="rounded-xl bg-sky-300 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-sky-200"
+                            <ButtonLink variant="primary"
                                 href="https://discord.gg/NpEN6h3tTp"
                                 target="_blank"
                                 rel="noreferrer"
                             >
                                 {t('Discord beitreten')}
-                            </a>
-                            <a className="rounded-xl border border-white/15 px-5 py-3 text-sm font-semibold text-white transition hover:border-white/30 hover:bg-white/5" href="/servers">
+                            </ButtonLink>
+                            <ButtonLink href="/servers">
                                 {t('Server entdecken')}
-                            </a>
+                            </ButtonLink>
                         </div>
                     </div>
 

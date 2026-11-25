@@ -1,3 +1,4 @@
+import Button, { ButtonLink } from '../components/Button';
 import { useState } from 'react';
 import WhitelistRequestDialog from '../components/WhitelistRequestDialog';
 import { useServiceStatus, type Service } from '../hooks/use-service-status';
@@ -37,9 +38,9 @@ export default function ServersPage({ auth }: { auth?: SSRAuthState }) {
                         {t('Hier findest du die Server-Adressen und ihren aktuellen Status. Die Anzeige wird live aktualisiert.')}
                     </p>
                 </div>
-                <a className="rounded-lg border px-4 py-2 text-sm theme-text transition hover:bg-white/5" href="/">
+                <ButtonLink href="/">
                     {t('Zur Startseite')}
-                </a>
+                </ButtonLink>
             </div>
 
             {loading ? (
@@ -79,13 +80,12 @@ export default function ServersPage({ auth }: { auth?: SSRAuthState }) {
                                         </div>
                                     )}
                                     {service.whitelistRequired && (
-                                        <button
-                                            className="mt-4 rounded-lg bg-sky-300 px-3 py-2 text-sm font-semibold text-slate-950 transition hover:bg-sky-200"
+                                        <Button variant="primary" className="mt-4"
                                             type="button"
                                             onClick={() => setWhitelistService(service)}
                                         >
                                             {t('Whitelist beantragen')}
-                                        </button>
+                                        </Button>
                                     )}
                                 </div>
                             </article>
