@@ -5,7 +5,8 @@ import test from 'node:test';
 import express from 'express';
 import { closeDatabasePool } from '@tattyhost/SQLutils';
 import { createAdminThnRouter } from '../src/api/api-admin-thn.ts';
-import { createAdminServicesRouter, createMinecraftServiceAuthenticator } from '../src/api/api-services.ts';
+import { createAdminServicesRouter, createMinecraftServiceAuthenticator, createServiceApiPreAuthRouter } from '../src/api/api-services.ts';
+import { requireUser } from '../src/api/api-shared.ts';
 import { createOwnStatsHandler, createThnPlayersRouter } from '../src/api/api-thn-players.ts';
 import { isCanonicalPlayerUuid, isLinkCode, ownPlayerStats, parsePlayerBatch, parsePlayerStats } from '../src/api/thn-player-contract.ts';
 import { isLoopbackHost, isPlayerBackupId, isWorldBackupId, isWorldName, PluginApiError, ThnPluginClient } from '../src/api/thn-plugin-client.ts';
@@ -105,6 +106,47 @@ test('service type and THNLink flag gate the appropriate plugin capabilities', a
         assert.equal((await request('thn')).status, 403);
         enabled = true;
         assert.equal((await request('thn')).status, 204);
+    } finally {
+        server.close();
+        await once(server, 'close');
+    }
+});
+
+test('service key pre-authentication only applies to exact plugin endpoints', async () => {
+    const app = express();
+    app.use(createServiceApiPreAuthRouter(async (req, res) => {
+        if (req.get('authorization') !== 'Bearer valid') {
+            res.status(401).json({ error: 'invalid service key' });
+            return null;
+        }
+        return { serviceId: 7, actorId: null };
+    }));
+    app.use(express.json());
+    app.post('/api/services/whitelist/requests', (req, res) => {
+        if (req.get('x-user')) res.locals.ssrAuth = { session: { userId: 'user', role: 'user' } };
+        if (!requireUser(res)) return;
+        res.json({ playerName: req.body.playerName });
+    });
+    app.all(['/api/services/status', '/api/services/whitelist', '/api/services/players/stats', '/api/services/players/link'], (_req, res) => res.status(204).end());
+    const server = http.createServer(app);
+    const port = await listen(server);
+    const base = `http://127.0.0.1:${port}`;
+    try {
+        for (const path of ['/api/services/status', '/api/services/whitelist', '/api/services/players/stats', '/api/services/players/link']) {
+            assert.equal((await fetch(`${base}${path}?test=1`)).status, 401);
+            assert.equal((await fetch(`${base}${path}/`, { headers: { Authorization: 'Bearer valid' } })).status, 204);
+        }
+        const request = (user: boolean) => fetch(`${base}/api/services/whitelist/requests`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...(user ? { 'x-user': 'user' } : {}) },
+            body: JSON.stringify({ playerName: 'Player' })
+        });
+        const anonymous = await request(false);
+        assert.equal(anonymous.status, 401);
+        assert.deepEqual(await anonymous.json(), { success: false, error: 'Anmeldung erforderlich' });
+        const loggedIn = await request(true);
+        assert.equal(loggedIn.status, 200);
+        assert.deepEqual(await loggedIn.json(), { playerName: 'Player' });
     } finally {
         server.close();
         await once(server, 'close');

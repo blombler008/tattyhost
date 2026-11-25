@@ -867,13 +867,13 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                                 >
                                                     <img className="h-5 w-5 material-icon" src={infoIcon} alt="" />
                                                 </Button>
+                                                <img className="h-6 w-6 shrink-0 material-icon" src={roleIcons[user.role]} alt={roleLabels[user.role]} title={roleLabels[user.role]} />
                                                 <div className="min-w-0 flex-1">
                                                     <h2 className="theme-text font-semibold">{user.username}</h2>
                                                     <p className="theme-muted break-all text-sm">{user.email}</p>
                                                 </div>
                                                 <div className="flex flex-wrap items-center gap-3">
                                                     <span className="theme-muted inline-flex items-center gap-1.5 text-sm">
-                                                        <img className="h-5 w-5 shrink-0 material-icon" src={roleIcons[user.role]} alt="" />
                                                         {roleLabels[user.role]}
                                                     </span>
                                                     <span className="flex items-center gap-1.5">

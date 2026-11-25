@@ -252,7 +252,7 @@ export default function SiteShell({ children, activePage, auth }: SiteShellProps
                                             </a>
                                         )}
                                         <div className="my-1 border-t border-white/[0.08]" />
-                                        <Button variant="ghost" className="w-full justify-start"
+                                        <Button variant="danger" className="w-full justify-start"
                                             type="button"
                                             onClick={logout}
                                             disabled={loggingOut}
