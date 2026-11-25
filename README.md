@@ -7,6 +7,12 @@ as actions. Variants are `primary`, `normal`, `danger`, `ghost`, `icon`, and
 `tab`; use `danger` for destructive actions and preserve native button types
 for form submissions. Run `npm run test:ui` for the shared control tests.
 
+## Minecraft server icon
+
+The site logo is available as a 64×64 PNG at
+`https://tattyhost.com/server-icon.png`. This is a static, pre-sized image; it
+does not resize other images or accept size parameters.
+
 ## Production startup
 
 On the Linux server, install dependencies (including development dependencies,
