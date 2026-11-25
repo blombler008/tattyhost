@@ -20,6 +20,9 @@ TattyHost-Webprojekt vor.
   wiederholen.
 - Die Web-API antwortet bei Fehlern mit JSON `{ "error": "..." }`. Fehlende
   oder ungültige Service-Schlüssel ergeben 401; Limits können 429 ergeben.
+  In der Serverkonfiguration muss der Typ **Game – Minecraft** und für
+  Spielerstatistiken sowie `/link` zusätzlich **THNLink** aktiviert sein;
+  andernfalls antworten diese Endpunkte mit 403.
 
 ## Heartbeat und Whitelist
 

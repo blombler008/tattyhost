@@ -7,6 +7,7 @@ import {
     HEARTBEAT_EXPIRED_DETAILS,
     hashServiceStatusApiKey,
     isHeartbeatExpired,
+    isValidServiceConfiguration,
     MAX_MINECRAFT_VERSION_LENGTH,
     MAX_SERVICE_PLAYERS,
     parseServiceStatusReport,
@@ -19,6 +20,16 @@ import { parseServiceApiBearer } from '../src/api/whitelist-contract.ts';
 const serviceApiKey = Buffer.alloc(48, 23).toString('base64');
 const serviceTokenHash = createHash('sha256').update(serviceApiKey).digest('hex');
 const receivedAt = new Date('2026-11-24T20:00:00.000Z');
+
+test('only Minecraft services can enable THNLink or Minecraft whitelists', () => {
+    assert.equal(isValidServiceConfiguration('generic', false, false), true);
+    assert.equal(isValidServiceConfiguration('minecraft', true, true), true);
+    assert.equal(isValidServiceConfiguration('minecraft', false, true), true);
+    assert.equal(isValidServiceConfiguration('generic', true, false), false);
+    assert.equal(isValidServiceConfiguration('generic', false, true), false);
+    assert.equal(isValidServiceConfiguration('other', false, false), false);
+    assert.equal(isValidServiceConfiguration('minecraft', 'true', false), false);
+});
 
 test('service rate limiting is independent per key and resets after the window', () => {
     const limiter = new ServiceRateLimiter(2, 60_000);

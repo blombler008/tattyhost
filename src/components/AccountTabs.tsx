@@ -3,6 +3,9 @@ import binIcon from '../assets/material-icons/rubbish-bin-delete-button.svg';
 import addIcon from '../assets/material-icons/round-add-button.svg';
 import { useI18n } from '../i18n-context';
 import { useToast } from '../toast-context';
+import MinecraftAccountCard, { accountActionClass, type AccountPlayerStats } from './MinecraftAccountCard';
+import refreshIcon from '../assets/material-icons/refresh-button.svg';
+import linkIcon from '../assets/material-icons/check-symbol.svg';
 
 type OwnWhitelistRequest = {
     id: number;
@@ -15,16 +18,6 @@ type MinecraftAccount = {
     player_uuid: string;
     player_name: string;
     verified: boolean;
-};
-
-type OwnPlayerStats = {
-    name: string;
-    online: boolean;
-    lastSeen: number;
-    playtimeTicks: number;
-    deaths: number;
-    mobKills: number;
-    playerKills: number;
 };
 
 const statusStyles: Record<OwnWhitelistRequest['status'], string> = {
@@ -120,7 +113,7 @@ export function MinecraftTab() {
     const [playerName, setPlayerName] = useState('');
     const [adding, setAdding] = useState(false);
     const [linkCode, setLinkCode] = useState<{ uuid: string; code: string } | null>(null);
-    const [stats, setStats] = useState<Record<string, OwnPlayerStats>>({});
+    const [stats, setStats] = useState<Record<string, AccountPlayerStats>>({});
     const [statsUnavailable, setStatsUnavailable] = useState<Record<string, boolean>>({});
 
     const load = useCallback(async () => {
@@ -192,8 +185,13 @@ export function MinecraftTab() {
     const loadStats = useCallback(async (account: MinecraftAccount) => {
         try {
             const response = await fetch(`/api/account/minecraft/${encodeURIComponent(account.player_uuid)}/stats`, { credentials: 'include' });
-            const data = await response.json() as { success: boolean; player?: OwnPlayerStats; error?: string };
+            const data = await response.json() as { success: boolean; player?: AccountPlayerStats; error?: string };
             if (response.status === 404) {
+                setStats((current) => {
+                    const next = { ...current };
+                    delete next[account.player_uuid];
+                    return next;
+                });
                 setStatsUnavailable((current) => ({ ...current, [account.player_uuid]: true }));
                 return;
             }
@@ -228,40 +226,24 @@ export function MinecraftTab() {
             ) : (
                 <ul className="mt-6 space-y-3">
                     {accounts.map((account) => (
-                        <li key={account.player_uuid} className="flex flex-wrap items-center justify-between gap-4 rounded-xl border p-4 theme-input">
-                            <span className="min-w-0">
-                                <span className="block font-medium theme-text">{account.player_name}</span>
-                                <span className="block truncate font-mono text-xs theme-muted">{account.player_uuid}</span>
-                                <span className="block text-xs theme-muted">{t(account.verified ? 'Verifiziert' : 'Nicht verifiziert')}</span>
-                                {!account.verified && linkCode?.uuid === account.player_uuid && (
-                                    <span className="block text-sm theme-text">{t('Im Spiel innerhalb von 10 Minuten eingeben:')} <code>/link {linkCode.code}</code></span>
-                                )}
-                                {stats[account.player_uuid] && (
-                                    <span className="block text-sm theme-text">
-                                        <span className="rounded-full bg-sky-300/20 px-2 py-1 text-xs">{stats[account.player_uuid].online && Date.now() - stats[account.player_uuid].lastSeen <= 90_000 ? t('Jetzt online') : t('Offline')}</span>
-                                        {' · '}{t('Spielzeit')}: {Math.floor(stats[account.player_uuid].playtimeTicks / 72_000)} h {Math.floor(stats[account.player_uuid].playtimeTicks / 1_200) % 60} min
-                                        {' · '}{t('Zuletzt gesehen')}: {new Date(stats[account.player_uuid].lastSeen).toLocaleString()}
-                                        {' · '}{t('Tode')}: {stats[account.player_uuid].deaths}
-                                        {' · '}{t('Monster-Kills')}: {stats[account.player_uuid].mobKills}
-                                        {' · '}{t('Spieler-Kills')}: {stats[account.player_uuid].playerKills}
-                                    </span>
-                                )}
-                                {account.verified && statsUnavailable[account.player_uuid] && <span className="block text-sm theme-muted">{t('Noch keine Spielerstatistik vorhanden')}</span>}
-                            </span>
-                            <button className="rounded-lg border px-3 py-2 text-sm theme-text" type="button" onClick={() => void (account.verified ? loadStats(account) : createCode(account))}>
+                        <li key={account.player_uuid}>
+                            <MinecraftAccountCard name={account.player_name} uuid={account.player_uuid} verified={account.verified} stats={stats[account.player_uuid] || (account.verified && statsUnavailable[account.player_uuid] ? null : undefined)} skinUrl={`/api/account/minecraft/${encodeURIComponent(account.player_uuid)}/skin`} notice={!account.verified && linkCode?.uuid === account.player_uuid && <p className="theme-subsection theme-text mt-4 rounded-xl border p-3 text-sm">{t('Im Spiel innerhalb von 10 Minuten eingeben:')} <code>/link {linkCode.code}</code></p>}>
+                            <button className={accountActionClass} type="button" onClick={() => void (account.verified ? loadStats(account) : createCode(account))}>
+                                <img className="material-icon h-4 w-4" src={account.verified ? refreshIcon : linkIcon} alt="" />
                                 {t(account.verified ? 'Spielzeit anzeigen' : 'Im Spiel verifizieren')}
                             </button>
                             {!account.verified && linkCode?.uuid === account.player_uuid && (
-                                <button className="rounded-lg border px-3 py-2 text-sm theme-text" type="button" onClick={() => void load()}>{t('Verifizierung aktualisieren')}</button>
+                                <button className={accountActionClass} type="button" onClick={() => void load()}><img className="material-icon h-4 w-4" src={refreshIcon} alt="" />{t('Verifizierung aktualisieren')}</button>
                             )}
                             <button
-                                className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-rose-300 transition hover:bg-white/5"
+                                className="inline-flex min-h-10 items-center gap-2 rounded-xl px-3 py-2 text-sm text-rose-500 transition hover:bg-rose-500/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-500"
                                 type="button"
                                 onClick={() => void remove(account)}
                             >
                                 <img className="material-icon h-5 w-5" src={binIcon} alt="" />
                                 {t('Entfernen')}
                             </button>
+                            </MinecraftAccountCard>
                         </li>
                     ))}
                 </ul>

@@ -125,6 +125,40 @@ body {
   color: var(--theme-muted);
 }
 
+.theme-tabs {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--theme-muted) transparent;
+}
+
+.theme-tabs::-webkit-scrollbar {
+  height: 6px;
+}
+
+.theme-tabs::-webkit-scrollbar-thumb {
+  background-color: var(--theme-muted);
+  border-radius: 999px;
+}
+
+.verification-badge {
+  color: #6ee7b7;
+  background-color: rgb(16 185 129 / 15%);
+}
+
+.verification-pending {
+  color: #fcd34d;
+  background-color: rgb(245 158 11 / 15%);
+}
+
+html[data-theme="light"] .verification-badge {
+  color: #047857;
+}
+
+html[data-theme="light"] .verification-pending {
+  color: #92400e;
+}
+
 .theme-shell .text-white {
   color: var(--theme-text);
 }

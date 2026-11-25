@@ -2,7 +2,7 @@ import { randomInt } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import { query, withDatabaseTransaction } from '@tattyhost/SQLutils';
 import { logEvent } from '../logging/app-logger.ts';
-import { authenticateServiceApiKey } from './api-services.ts';
+import { authenticateMinecraftService } from './api-services.ts';
 import { logApiFailure, requireUser, sendFailure, sendServerFailure, sendSuccess } from './api-shared.ts';
 import { hashLinkCode, isCanonicalPlayerUuid, isLinkCode, ownPlayerStats, parsePlayerBatch, parsePlayerStats } from './thn-player-contract.ts';
 
@@ -67,7 +67,7 @@ async function createLinkCode(req: Request, res: Response) {
 }
 
 async function verifyLink(req: Request, res: Response) {
-    const service = await authenticateServiceApiKey(req, res);
+    const service = await authenticateMinecraftService(req, res, true);
     if (!service) return;
     if (!req.is('application/json')) {
         res.status(415).json({ error: 'Content-Type muss application/json sein' });
@@ -128,7 +128,7 @@ async function verifyLink(req: Request, res: Response) {
 }
 
 async function putStats(req: Request, res: Response) {
-    const service = await authenticateServiceApiKey(req, res);
+    const service = await authenticateMinecraftService(req, res, true);
     if (!service) return;
     if (!req.is('application/json')) {
         res.status(415).json({ error: 'Content-Type muss application/json sein' });
@@ -168,7 +168,7 @@ async function putStats(req: Request, res: Response) {
 }
 
 async function getServiceStats(req: Request, res: Response) {
-    if (!await authenticateServiceApiKey(req, res)) return;
+    if (!await authenticateMinecraftService(req, res, true)) return;
     const uuid = req.query.uuid;
     if (!isCanonicalPlayerUuid(uuid)) {
         res.status(400).json({ error: 'Ungültige Minecraft-UUID' });
@@ -190,13 +190,16 @@ async function getServiceStats(req: Request, res: Response) {
     }
 }
 
-async function loadOwnedStats(uuid: string, userId: string): Promise<string | null> {
-    const rows = await query<{ stats_json: string }>(
-        `SELECT s.stats_json FROM minecraft_player_stats s
+type OwnedStatsRow = { stats_json: string; server_name: string | null };
+
+async function loadOwnedStats(uuid: string, userId: string): Promise<OwnedStatsRow | null> {
+    const rows = await query<OwnedStatsRow>(
+        `SELECT s.stats_json, service.name AS server_name FROM minecraft_player_stats s
          JOIN verified_minecraft_links v ON v.player_uuid = s.player_uuid
+         LEFT JOIN service_status service ON service.id = s.service_id
          WHERE s.player_uuid = ? AND v.user_uuid = ?`, [uuid, userId]
     );
-    return rows[0]?.stats_json ?? null;
+    return rows[0] ?? null;
 }
 
 export function createOwnStatsHandler(load: typeof loadOwnedStats = loadOwnedStats) {
@@ -214,10 +217,10 @@ export function createOwnStatsHandler(load: typeof loadOwnedStats = loadOwnedSta
                 sendFailure(res, 404, 'Spielerstatistik nicht gefunden oder Konto nicht verifiziert');
                 return;
             }
-            const player = parsePlayerStats(JSON.parse(stored), Date.now());
+            const player = parsePlayerStats(JSON.parse(stored.stats_json), Date.now());
             if (!player) throw new Error('Invalid stored player stats');
             res.setHeader('Cache-Control', 'private, no-store');
-            sendSuccess(res, { player: ownPlayerStats(player, Date.now()) });
+            sendSuccess(res, { player: { ...ownPlayerStats(player, Date.now()), serverName: stored.server_name } });
         } catch (error) {
             logApiFailure(res, 'api.account.player_stats_load_failed', error);
             sendServerFailure(res);

@@ -20,6 +20,9 @@ import supporterRoleIcon from '../assets/material-icons/headset.svg';
 import moderatorRoleIcon from '../assets/material-icons/chat-bubbles.svg';
 import adminRoleIcon from '../assets/basics/shield.svg';
 import ThnAdminPanel from '../components/ThnAdminPanel';
+import MinecraftAccountCard, { accountActionClass, type AccountPlayerStats } from '../components/MinecraftAccountCard';
+import refreshIcon from '../assets/material-icons/refresh-button.svg';
+import binIcon from '../assets/material-icons/rubbish-bin-delete-button.svg';
 
 type Overview = {
     users: number;
@@ -64,6 +67,8 @@ type Service = {
     details: string;
     manualOverride: boolean;
     whitelistRequired: boolean;
+    serviceType: 'generic' | 'minecraft';
+    thnlinkEnabled: boolean;
     apiKeyConfigured: boolean;
     apiKeyCreatedAt: string | null;
     lastReportedAt: string | null;
@@ -93,6 +98,8 @@ type WhitelistAction = 'approve' | 'reject' | 'revoke';
 type MinecraftAccount = {
     player_uuid: string;
     player_name: string;
+    verified: boolean;
+    stats: AccountPlayerStats | null;
 };
 
 type WhitelistHistoryNote = {
@@ -213,6 +220,7 @@ export default function AdminPage({ auth }: AdminPageProps) {
     const [whitelistFilter, setWhitelistFilter] = useState<WhitelistStatus | 'all'>('pending');
     const [whitelistEntries, setWhitelistEntries] = useState<WhitelistEntry[]>([]);
     const [infoUserId, setInfoUserId] = useState<string | null>(null);
+    const infoUserIdRef = useRef<string | null>(null);
     const [showUserLegend, setShowUserLegend] = useState(false);
     const [userWhitelistEntries, setUserWhitelistEntries] = useState<WhitelistEntry[]>([]);
     const [userWhitelistHistory, setUserWhitelistHistory] = useState<WhitelistHistoryNote[]>([]);
@@ -225,6 +233,7 @@ export default function AdminPage({ auth }: AdminPageProps) {
     const [downloads, setDownloads] = useState<AdminDownload[]>([]);
     const [maxUploadMb, setMaxUploadMb] = useState(16);
     const [services, setServices] = useState<Service[]>([]);
+    const [savedServices, setSavedServices] = useState<Service[]>([]);
     const [showServiceInfo, setShowServiceInfo] = useState(false);
     const [showServiceForm, setShowServiceForm] = useState(false);
     const [newService, setNewService] = useState({
@@ -233,7 +242,9 @@ export default function AdminPage({ auth }: AdminPageProps) {
         status: 'maintenance' as Service['status'],
         details: '',
         manualOverride: false,
-        whitelistRequired: false
+        whitelistRequired: false,
+        serviceType: 'generic' as Service['serviceType'],
+        thnlinkEnabled: false
     });
     const [fileListingRules, setFileListingRules] = useState<FileListingRules | null>(null);
     const [revealedServiceApiKeys, setRevealedServiceApiKeys] = useState<Record<number, string>>({});
@@ -279,6 +290,12 @@ export default function AdminPage({ auth }: AdminPageProps) {
     const loadServices = useCallback(async () => {
         const data = await requestJson<{ services: Service[] }>('/api/admin/services');
         setServices(data.services);
+        setSavedServices(data.services);
+    }, []);
+
+    const refreshSavedServices = useCallback(async () => {
+        const data = await requestJson<{ services: Service[] }>('/api/admin/services');
+        setSavedServices(data.services);
     }, []);
 
     const loadWhitelist = useCallback(async () => {
@@ -293,10 +310,26 @@ export default function AdminPage({ auth }: AdminPageProps) {
             requestJson<{ history: WhitelistHistoryNote[] }>(`/api/admin/whitelist/history?userId=${encodeURIComponent(userId)}`),
             requestJson<{ accounts: MinecraftAccount[] }>(`/api/admin/users/${encodeURIComponent(userId)}/minecraft`)
         ]);
+        if (infoUserIdRef.current !== userId) return;
         setUserWhitelistEntries(data.requests);
         setUserWhitelistHistory(historyData.history);
         setUserMinecraftAccounts(minecraftData.accounts);
     }, []);
+
+    useEffect(() => {
+        if (tab !== 'users' || !infoUserId || saving) return;
+        let cancelled = false;
+        const timer = window.setInterval(() => {
+            void requestJson<{ accounts: MinecraftAccount[] }>(`/api/admin/users/${encodeURIComponent(infoUserId)}/minecraft`)
+                .then((data) => {
+                    if (!cancelled && infoUserIdRef.current === infoUserId) setUserMinecraftAccounts(data.accounts);
+                })
+                .catch((error: unknown) => {
+                    if (!cancelled) toast(error instanceof Error ? error.message : 'Minecraft-Konten konnten nicht geladen werden', 'error');
+                });
+        }, 30000);
+        return () => { cancelled = true; window.clearInterval(timer); };
+    }, [tab, infoUserId, saving, toast]);
 
     useEffect(() => {
         if (tab !== 'whitelist') return;
@@ -551,12 +584,15 @@ export default function AdminPage({ auth }: AdminPageProps) {
 
     const toggleUserInfo = (user: AdminUser) => {
         if (infoUserId === user.uuid) {
+            infoUserIdRef.current = null;
             setInfoUserId(null);
             return;
         }
+        infoUserIdRef.current = user.uuid;
         setInfoUserId(user.uuid);
         setUserWhitelistEntries([]);
         setUserWhitelistHistory([]);
+        setUserMinecraftAccounts([]);
         setNewMinecraftName('');
         setGrantName('');
         loadUserWhitelist(user.uuid).catch((loadError: unknown) => {
@@ -574,7 +610,9 @@ export default function AdminPage({ auth }: AdminPageProps) {
                     status: service.status,
                     details: service.details,
                     manualOverride: service.manualOverride,
-                    whitelistRequired: service.whitelistRequired
+                    whitelistRequired: service.whitelistRequired,
+                    serviceType: service.serviceType,
+                    thnlinkEnabled: service.thnlinkEnabled
                 })
             }),
             loadServices,
@@ -606,7 +644,9 @@ export default function AdminPage({ auth }: AdminPageProps) {
                     status: 'maintenance',
                     details: '',
                     manualOverride: false,
-                    whitelistRequired: false
+                    whitelistRequired: false,
+                    serviceType: 'generic',
+                    thnlinkEnabled: false
                 });
                 setRevealedServiceApiKeys((current) => ({ ...current, [data.serviceId]: data.apiKey }));
                 try {
@@ -696,11 +736,11 @@ export default function AdminPage({ auth }: AdminPageProps) {
                 </button>
             </div>
 
-            <div className="mt-8 flex gap-2 overflow-x-auto border-b border-[var(--theme-border)]" role="tablist" aria-label={t('Admin-Bereiche')}>
+            <div className="theme-tabs mt-8 flex gap-2 border-b border-[var(--theme-border)]" role="tablist" aria-label={t('Admin-Bereiche')}>
                 {tabs.map((item) => (
                     <button
                         key={item.id}
-                        className={`-mb-px flex shrink-0 items-center gap-2 border-b-2 px-4 py-2 text-sm font-medium transition ${tab === item.id ? 'border-sky-300 theme-text' : 'border-transparent theme-muted hover:text-sky-200'}`}
+                        className={`flex shrink-0 items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-sky-400 ${tab === item.id ? 'border-sky-300 theme-text' : 'border-transparent theme-muted hover:bg-[var(--theme-section)] hover:text-sky-200'}`}
                         type="button"
                         role="tab"
                         aria-selected={tab === item.id}
@@ -712,7 +752,7 @@ export default function AdminPage({ auth }: AdminPageProps) {
                 ))}
             </div>
 
-            {tab === 'thn' && <ThnAdminPanel services={services} />}
+            {tab === 'thn' && <ThnAdminPanel services={savedServices} onRefreshServices={refreshSavedServices} />}
             {tab === 'services' && (
                 <div className="mt-3 flex justify-end gap-2">
                     <button
@@ -885,14 +925,9 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                                         <p className="theme-muted text-sm">{t('Keine Minecraft-Konten verknüpft.')}</p>
                                                     )}
                                                     {userMinecraftAccounts.map((account) => (
-                                                        <div key={account.player_uuid} className="theme-panel flex flex-wrap items-center justify-between gap-2 rounded-xl border p-3">
-                                                            <div className="min-w-0">
-                                                                <p className="theme-text text-sm font-semibold">{account.player_name}</p>
-                                                                <p className="theme-muted break-all font-mono text-xs">{account.player_uuid}</p>
-                                                            </div>
-                                                            <div className="flex gap-2">
+                                                        <MinecraftAccountCard key={`${user.uuid}-${account.player_uuid}`} name={account.player_name} uuid={account.player_uuid} verified={account.verified} stats={account.stats} skinUrl={`/api/admin/users/${encodeURIComponent(user.uuid)}/minecraft/${encodeURIComponent(account.player_uuid)}/skin`}>
                                                                 <button
-                                                                    className="rounded-lg border px-3 py-1 text-sm theme-text transition hover:bg-white/5 disabled:opacity-50"
+                                                                    className={accountActionClass}
                                                                     type="button"
                                                                     disabled={saving}
                                                                     title={t('Aktuellen Namen von Mojang laden')}
@@ -902,10 +937,10 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                                                         t('Minecraft-Name aktualisiert.')
                                                                     )}
                                                                 >
-                                                                    {t('Name aktualisieren')}
+                                                                    <img src={refreshIcon} className="material-icon h-4 w-4" alt="" />{t('Name aktualisieren')}
                                                                 </button>
                                                                 <button
-                                                                    className="rounded-lg px-3 py-1 text-sm text-rose-300 transition hover:bg-white/5 disabled:opacity-50"
+                                                                    className="inline-flex min-h-10 items-center gap-2 rounded-xl px-3 py-2 text-sm text-rose-500 transition hover:bg-rose-500/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-500 disabled:opacity-50"
                                                                     type="button"
                                                                     disabled={saving}
                                                                     onClick={() => {
@@ -917,10 +952,9 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                                                         );
                                                                     }}
                                                                 >
-                                                                    {t('Entfernen')}
+                                                                    <img src={binIcon} className="material-icon h-4 w-4" alt="" />{t('Entfernen')}
                                                                 </button>
-                                                            </div>
-                                                        </div>
+                                                        </MinecraftAccountCard>
                                                     ))}
                                                     <form
                                                         className="flex gap-2"
@@ -978,7 +1012,7 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                                             aria-label={t('Server')}
                                                         >
                                                             <option value="">{t('Server wählen')}</option>
-                                                            {services.map((service) => (
+                                                            {savedServices.filter((service) => service.serviceType === 'minecraft').map((service) => (
                                                                 <option key={service.id} value={service.id}>{t(service.name)}</option>
                                                             ))}
                                                         </select>
@@ -1274,6 +1308,15 @@ export default function AdminPage({ auth }: AdminPageProps) {
                             {showServiceForm && (
                                 <form id="service-create-form" className="theme-panel grid gap-3 rounded-2xl border p-5 sm:grid-cols-2" onSubmit={createService}>
                                     <h2 className="theme-text font-semibold sm:col-span-2">{t('Service hinzufügen')}</h2>
+                                    <label className="theme-muted text-sm sm:col-span-2">{t('Servertyp')}
+                                        <select className="theme-input mt-1 block w-full rounded-lg border px-3 py-2" value={newService.serviceType} onChange={(event) => {
+                                            const serviceType = event.target.value === 'minecraft' ? 'minecraft' : 'generic';
+                                            setNewService((current) => ({ ...current, serviceType, ...(serviceType === 'generic' ? { whitelistRequired: false, thnlinkEnabled: false } : {}) }));
+                                        }}>
+                                            <option value="generic">{t('Allgemeiner Dienst')}</option>
+                                            <option value="minecraft">{t('Game – Minecraft')}</option>
+                                        </select>
+                                    </label>
                                     <input
                                         className="theme-input rounded-lg border px-3 py-2 text-sm"
                                         value={newService.name}
@@ -1318,14 +1361,16 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                         />
                                         {t('Manueller Status-Override')}
                                     </label>
-                                    <label className="theme-muted flex items-center gap-2 text-sm sm:col-span-2">
+                                    {newService.serviceType === 'minecraft' && <label className="theme-muted flex items-center gap-2 text-sm sm:col-span-2">
                                         <input
                                             type="checkbox"
                                             checked={newService.whitelistRequired}
                                             onChange={(event) => setNewService((current) => ({ ...current, whitelistRequired: event.target.checked }))}
                                         />
                                         {t('Whitelist erforderlich')}
-                                    </label>
+                                    </label>}
+                                    {newService.serviceType === 'minecraft' && <label className="theme-muted flex items-center gap-2 text-sm sm:col-span-2"><input type="checkbox" checked={newService.thnlinkEnabled} onChange={(event) => setNewService((current) => ({ ...current, thnlinkEnabled: event.target.checked }))} />{t('THNLink aktivieren')}</label>}
+                                    {newService.serviceType === 'minecraft' && <p className="theme-muted text-xs sm:col-span-2">{t('Minecraft-Whitelists verwenden Spielernamen und UUIDs. THNLink aktiviert Spielerstatistiken und Backups.')}</p>}
                                     <button
                                         className="w-fit rounded-lg bg-sky-300 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50 sm:col-span-2"
                                         type="submit"
@@ -1337,6 +1382,15 @@ export default function AdminPage({ auth }: AdminPageProps) {
                             )}
                             {services.map((service) => (
                                 <article key={service.id} className="theme-panel grid gap-3 rounded-2xl border p-5 sm:grid-cols-2">
+                                    <label className="theme-muted text-sm sm:col-span-2">{t('Servertyp')}
+                                        <select className="theme-input mt-1 block w-full rounded-lg border px-3 py-2" disabled={saving} value={service.serviceType} onChange={(event) => {
+                                            const serviceType = event.target.value === 'minecraft' ? 'minecraft' : 'generic';
+                                            setServices((items) => items.map((item) => item.id === service.id ? { ...item, serviceType, ...(serviceType === 'generic' ? { whitelistRequired: false, thnlinkEnabled: false } : {}) } : item));
+                                        }}>
+                                            <option value="generic">{t('Allgemeiner Dienst')}</option>
+                                            <option value="minecraft">{t('Game – Minecraft')}</option>
+                                        </select>
+                                    </label>
                                     <input
                                         className="theme-input rounded-lg border px-3 py-2 text-sm"
                                         value={service.name}
@@ -1368,7 +1422,7 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                         />
                                         {t('Manueller Status-Override')}
                                     </label>
-                                    <label className="theme-muted flex items-center gap-2 text-sm sm:col-span-2">
+                                    {service.serviceType === 'minecraft' && <label className="theme-muted flex items-center gap-2 text-sm sm:col-span-2">
                                         <input
                                             type="checkbox"
                                             checked={service.whitelistRequired}
@@ -1376,7 +1430,9 @@ export default function AdminPage({ auth }: AdminPageProps) {
                                             onChange={(event) => setServices((items) => items.map((item) => item.id === service.id ? { ...item, whitelistRequired: event.target.checked } : item))}
                                         />
                                         {t('Whitelist erforderlich')}
-                                    </label>
+                                    </label>}
+                                    {service.serviceType === 'minecraft' && <label className="theme-muted flex items-center gap-2 text-sm sm:col-span-2"><input type="checkbox" checked={service.thnlinkEnabled} disabled={saving} onChange={(event) => setServices((items) => items.map((item) => item.id === service.id ? { ...item, thnlinkEnabled: event.target.checked } : item))} />{t('THNLink aktivieren')}</label>}
+                                    <p className="theme-muted text-xs sm:col-span-2">{t(service.serviceType === 'minecraft' ? 'Minecraft-Whitelists verwenden Spielernamen und UUIDs. THNLink aktiviert Spielerstatistiken und Backups.' : 'Minecraft-Einstellungen sind für allgemeine Dienste deaktiviert. Bestehende Whitelist-Einträge bleiben erhalten.')}</p>
                                     <div className="flex flex-wrap items-center gap-3 sm:col-span-2">
                                         <span className="theme-muted text-sm">
                                             {t('API-Schlüssel: {status}', { status: service.apiKeyConfigured ? t('Aktiv') : t('Nicht eingerichtet') })}

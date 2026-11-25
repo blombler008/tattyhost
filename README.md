@@ -95,6 +95,20 @@ global server-status keys are not accepted by this service-specific API.
 Authenticated service requests are limited to 120 per minute per service
 within each web-server process; excess requests receive `429`.
 
+Choose **General service** or **Game – Minecraft** in the service settings.
+Minecraft services have a Minecraft UUID/name whitelist option and a separate
+THNLink switch. Enable THNLink for plugin player statistics, linking and local
+backup management; the THNLink tab selects the first enabled server
+automatically. General services still support status heartbeats, but not the
+Minecraft whitelist or THNLink endpoints. Changing a type does not delete
+existing whitelist entries. Save the settings before switching tabs.
+
+On the first startup after this update, services with existing service keys
+are migrated to Minecraft with THNLink enabled to preserve integrations;
+services with a whitelist but no key are migrated to Minecraft without
+THNLink, and other services become general services. Review the types in the
+admin area after upgrading. This migration runs as part of normal schema setup.
+
 Send a `PUT` request to `/api/services/status` over HTTPS with the key in the
 `Authorization` header. The key identifies the service, so the body does not
 include a `name`. `status` must be `online`, `offline`, or `maintenance`;
@@ -177,6 +191,13 @@ latest heartbeat and `127.0.0.1`. An administrator may set a write-only
 per-service loopback IP override with `PUT /api/admin/thn/:id/host-override`,
 body `{"host":"::1"}`; use `{"host":null}` to reset it. Non-loopback hosts
 are rejected, and neither host nor port is returned to the browser.
+
+Linked-account cards display verification, online status and playtime
+separately. While the player is online, the displayed server is the service
+that sent the latest player report. The server fetches player skin textures from Mojang's official
+profile and texture hosts to render the head; no third-party avatar service
+receives the player's UUID. If the skin is unavailable, the card shows a
+generic icon. The skin route checks account ownership or administrator access.
 
 Plugin requests require the service key. For example, with the key supplied by
 the process environment:

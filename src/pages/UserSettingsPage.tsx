@@ -198,11 +198,11 @@ export default function UserSettingsPage() {
                 <p className="mt-8 text-sm theme-muted" role="status">{t('Einstellungen werden geladen...')}</p>
             ) : settings && account && (
                 <div className="mt-8 space-y-8">
-                    <div className="flex gap-2 border-b border-[var(--theme-border)]" role="tablist">
+                    <div className="theme-tabs flex gap-2 border-b border-[var(--theme-border)]" role="tablist" aria-label={t('Profil-Einstellungen')}>
                         {accountTabs.map((item) => (
                             <button
                                 key={item.id}
-                                className={`-mb-px flex items-center gap-2 border-b-2 px-4 py-2 text-sm font-medium transition ${tab === item.id ? 'border-sky-300 theme-text' : 'border-transparent theme-muted hover:text-sky-200'}`}
+                                className={`flex shrink-0 items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-sky-400 ${tab === item.id ? 'border-sky-300 theme-text' : 'border-transparent theme-muted hover:bg-[var(--theme-section)] hover:text-sky-200'}`}
                                 type="button"
                                 role="tab"
                                 aria-selected={tab === item.id}

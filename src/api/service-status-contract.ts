@@ -7,6 +7,14 @@ export const HEARTBEAT_EXPIRED_DETAILS = 'Keine Statusmeldung seit über 90 Seku
 
 export type ServiceStatus = typeof VALID_SERVICE_STATUSES[number];
 
+export type ServiceType = 'generic' | 'minecraft';
+
+export function isValidServiceConfiguration(type: unknown, thnlinkEnabled: unknown, whitelistRequired: unknown): boolean {
+    return (type === 'generic' || type === 'minecraft') &&
+        typeof thnlinkEnabled === 'boolean' && typeof whitelistRequired === 'boolean' &&
+        (type === 'minecraft' || (!thnlinkEnabled && !whitelistRequired));
+}
+
 export type ServiceStatusReport = {
     status: ServiceStatus;
     details?: string;

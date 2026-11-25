@@ -5,7 +5,8 @@ info:
   description: >
     Service routes require a per-server bearer key. Account and admin routes
     require a website session. The local plugin API is loopback-only and must
-    never be called from a browser.
+    never be called from a browser. Whitelist access requires a Minecraft
+    service; player/link and local plugin routes also require THNLink enabled.
 servers:
   - url: https://tattyhost.com
 paths:
@@ -68,6 +69,7 @@ paths:
                         name: { $ref: '#/components/schemas/Name' }
         '304': { description: Snapshot unchanged }
         '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
         '503': { $ref: '#/components/responses/Error' }
   /api/services/players/stats:
     put:
@@ -89,6 +91,7 @@ paths:
         '204': { description: Valid entries stored }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
     get:
       security: [{ serviceKey: [] }]
       parameters:
@@ -100,6 +103,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/PlayerStats' }
         '404': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
   /api/services/players/link:
     put:
       security: [{ serviceKey: [] }]
@@ -120,6 +124,7 @@ paths:
         '204': { description: Verified }
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
         '429': { $ref: '#/components/responses/Error' }
   /api/account/minecraft/{uuid}/link-code:
@@ -134,8 +139,20 @@ paths:
       security: [{ session: [] }]
       parameters: [{ $ref: '#/components/parameters/Uuid' }]
       responses:
-        '200': { description: Verified owner's stats; coordinates excluded. }
+        '200': { description: "Verified owner's stats with nullable serverName for the latest reporting service; coordinates excluded." }
         '404': { description: No stats or ownership not verified. }
+  /api/account/minecraft/{uuid}/skin:
+    get:
+      security: [{ session: [] }]
+      parameters: [{ $ref: '#/components/parameters/Uuid' }]
+      responses:
+        '200':
+          description: "The linked account's official Minecraft skin texture."
+          content:
+            image/png:
+              schema: { type: string, format: binary }
+        '404': { description: No linked account or custom skin. }
+        '502': { $ref: '#/components/responses/Error' }
   /api/admin/services:
     post:
       security: [{ session: [] }]
@@ -154,6 +171,8 @@ paths:
                 details: { type: string, maxLength: 255 }
                 manualOverride: { type: boolean }
                 whitelistRequired: { type: boolean }
+                serviceType: { type: string, enum: [generic, minecraft], description: Legacy requests omitting the type create a Minecraft service. }
+                thnlinkEnabled: { type: boolean, description: Only valid for Minecraft services. }
       responses:
         '200':
           description: The key is shown once and the response is not cacheable.

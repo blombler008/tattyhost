@@ -276,6 +276,8 @@ export async function setupServiceStatusTable() {
     await execute('ALTER TABLE service_status ADD COLUMN IF NOT EXISTS minecraft_version VARCHAR(32) NULL');
     await execute('ALTER TABLE service_status ADD COLUMN IF NOT EXISTS plugin_api_port SMALLINT UNSIGNED NULL');
     await execute('ALTER TABLE service_status ADD COLUMN IF NOT EXISTS plugin_api_host_override VARCHAR(45) NULL');
+    await execute("ALTER TABLE service_status ADD COLUMN IF NOT EXISTS service_type VARCHAR(32) NOT NULL DEFAULT 'legacy'");
+    await execute('ALTER TABLE service_status ADD COLUMN IF NOT EXISTS thnlink_enabled BOOLEAN NOT NULL DEFAULT FALSE');
     // Format 2 liefert Spielernamen; einmalig die Revision erhöhen, damit Clients den neuen Snapshot laden.
     await execute('ALTER TABLE service_status ADD COLUMN IF NOT EXISTS whitelist_format INT UNSIGNED NOT NULL DEFAULT 1');
     await execute('UPDATE service_status SET whitelist_revision = whitelist_revision + 1, whitelist_format = 2 WHERE whitelist_format < 2');
@@ -339,6 +341,12 @@ export async function setupServiceStatusServiceApiKeysTable() {
             UNIQUE KEY uq_service_status_service_api_keys_token_hash (token_hash)
         );
     `);
+    await execute(`UPDATE service_status s
+        LEFT JOIN service_status_service_api_keys k ON k.service_id = s.id
+        SET s.service_type = IF(k.service_id IS NOT NULL OR s.whitelist_required = TRUE, 'minecraft', 'generic'),
+            s.thnlink_enabled = IF(k.service_id IS NULL, FALSE, TRUE)
+        WHERE s.service_type = 'legacy'`);
+    await execute("ALTER TABLE service_status ALTER COLUMN service_type SET DEFAULT 'generic'");
 }
 
 export async function setupThnPlayerTables() {

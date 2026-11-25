@@ -5,13 +5,22 @@ import { auditStatement, logApiFailure, logAuditCommitted, requireAdmin, sendFai
 import { isCanonicalPlayerUuid } from './thn-player-contract.ts';
 import { isLoopbackHost, isPlayerBackupId, isWorldBackupId, isWorldName, PluginApiError, ThnPluginClient } from './thn-plugin-client.ts';
 
+async function requireConfiguredThnService(idValue: string): Promise<void> {
+    const id = Number(idValue);
+    if (!Number.isSafeInteger(id) || id < 1) throw new PluginApiError(400, 'Ungültige Service-ID');
+    const rows = await query<{ id: number }>(
+        "SELECT id FROM service_status WHERE id = ? AND service_type = 'minecraft' AND thnlink_enabled = TRUE", [id]
+    );
+    if (!rows[0]) throw new PluginApiError(404, 'THNLink ist für diesen Service nicht aktiviert');
+}
+
 async function getClient(req: Request): Promise<ThnPluginClient> {
     const id = Number(req.params.id);
     if (!Number.isSafeInteger(id) || id < 1) throw new PluginApiError(400, 'Ungültige Service-ID');
     const rows = await query<{ plugin_api_port: number | null; plugin_api_host_override: string | null; last_reported_at: Date | null }>(
-        'SELECT plugin_api_port, plugin_api_host_override, last_reported_at FROM service_status WHERE id = ?', [id]
+        "SELECT plugin_api_port, plugin_api_host_override, last_reported_at FROM service_status WHERE id = ? AND service_type = 'minecraft' AND thnlink_enabled = TRUE", [id]
     );
-    if (!rows[0]) throw new PluginApiError(404, 'Service nicht gefunden');
+    if (!rows[0]) throw new PluginApiError(404, 'THNLink ist für diesen Service nicht aktiviert');
     const lastHeartbeat = rows[0].last_reported_at && new Date(rows[0].last_reported_at).getTime();
     if (!lastHeartbeat || !Number.isFinite(lastHeartbeat) || Date.now() - lastHeartbeat > 90_000) {
         throw new PluginApiError(503, 'Server offline oder wird neu gestartet');
@@ -125,9 +134,9 @@ async function setHostOverride(req: Request, res: Response) {
         return;
     }
     try {
-        const rows = await query<{ id: number }>('SELECT id FROM service_status WHERE id = ?', [id]);
+        const rows = await query<{ id: number }>("SELECT id FROM service_status WHERE id = ? AND service_type = 'minecraft' AND thnlink_enabled = TRUE", [id]);
         if (!rows.length) {
-            sendFailure(res, 404, 'Service nicht gefunden');
+            sendFailure(res, 404, 'THNLink ist für diesen Service nicht aktiviert');
             return;
         }
         await executeTransaction([
@@ -148,6 +157,7 @@ async function getStoredStats(req: Request, res: Response) {
         return;
     }
     try {
+        await requireConfiguredThnService(req.params.id);
         const rows = await query<{ stats_json: string }>(
             'SELECT stats_json FROM minecraft_player_stats WHERE player_uuid = ?', [req.params.uuid]
         );
@@ -158,8 +168,7 @@ async function getStoredStats(req: Request, res: Response) {
         res.setHeader('Cache-Control', 'no-store');
         sendSuccess(res, { player: JSON.parse(rows[0].stats_json) });
     } catch (error) {
-        logApiFailure(res, 'api.admin.thn.stored_stats_failed', error);
-        sendServerFailure(res);
+        pluginFailure(res, error);
     }
 }
 
@@ -171,6 +180,7 @@ async function getAudit(req: Request, res: Response) {
         return;
     }
     try {
+        await requireConfiguredThnService(req.params.id);
         const entries = await query<{ id: number; action: string; details: string | null; logged_at: Date; username: string | null }>(
             `SELECT a.id, a.action, a.details, a.logged_at, u.username
              FROM audit_logs a LEFT JOIN users u ON u.uuid = a.user_uuid
@@ -181,8 +191,7 @@ async function getAudit(req: Request, res: Response) {
         res.setHeader('Cache-Control', 'no-store');
         sendSuccess(res, { entries });
     } catch (error) {
-        logApiFailure(res, 'api.admin.thn.audit_load_failed', error);
-        sendServerFailure(res);
+        pluginFailure(res, error);
     }
 }
 

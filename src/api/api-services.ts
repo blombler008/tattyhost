@@ -9,12 +9,14 @@ import {
     applyServiceHeartbeat,
     HEARTBEAT_EXPIRED_DETAILS,
     hashServiceStatusApiKey,
+    isValidServiceConfiguration,
     parseServiceStatusReport,
     resolveServiceApiKeyRecord,
     ServiceRateLimiter,
     SERVICE_STATUS_HEARTBEAT_TIMEOUT_SECONDS,
     VALID_SERVICE_STATUSES
 } from './service-status-contract.ts';
+import type { ServiceType } from './service-status-contract.ts';
 import { parseServiceApiBearer } from './whitelist-contract.ts';
 
 const SERVICE_STATUS_PUSH_INTERVAL_MS = 10_000;
@@ -89,6 +91,38 @@ export async function authenticateServiceApiKey(req: Request, res: Response): Pr
         return null;
     }
 }
+
+async function loadServiceConfiguration(serviceId: number) {
+    const services = await query<{ service_type: string; thnlink_enabled: unknown }>(
+        'SELECT service_type, thnlink_enabled FROM service_status WHERE id = ?', [serviceId]
+    );
+    return services[0] ?? null;
+}
+
+export function createMinecraftServiceAuthenticator(
+    authenticate = authenticateServiceApiKey,
+    loadConfiguration = loadServiceConfiguration
+) {
+    return async (req: Request, res: Response, requireThnLink = false) => {
+        const auth = await authenticate(req, res);
+        if (!auth) return null;
+        try {
+            const service = await loadConfiguration(auth.serviceId);
+            if (!service || service.service_type !== 'minecraft' ||
+                (requireThnLink && !isDatabaseBoolean(service.thnlink_enabled))) {
+                res.status(403).json({ error: 'Minecraft oder THNLink ist für diesen Service nicht aktiviert' });
+                return null;
+            }
+            return auth;
+        } catch (error) {
+            logApiFailure(res, 'api.service_status.configuration_failed', error);
+            res.status(500).json({ error: 'Der Dienst ist derzeit nicht verfügbar' });
+            return null;
+        }
+    };
+}
+
+export const authenticateMinecraftService = createMinecraftServiceAuthenticator();
 
 async function getServicesAPIRoute(_req: Request, res: Response) {
     try {
@@ -362,6 +396,8 @@ async function getAdminServicesAPIRoute(_req: Request, res: Response) {
             details: string;
             manual_override: unknown;
             whitelist_required: unknown;
+            service_type: ServiceType;
+            thnlink_enabled: unknown;
             api_key_configured: unknown;
             api_key_created_at: Date | null;
             last_reported_at: Date | null;
@@ -369,7 +405,7 @@ async function getAdminServicesAPIRoute(_req: Request, res: Response) {
             players_max: number | null;
             minecraft_version: string | null;
         }>(`
-            SELECT s.id, s.name, s.address, s.status, s.details, s.manual_override, s.whitelist_required,
+            SELECT s.id, s.name, s.address, s.status, s.details, s.manual_override, s.whitelist_required, s.service_type, s.thnlink_enabled,
                    s.last_reported_at, s.players_online, s.players_max, s.minecraft_version,
                    k.service_id IS NOT NULL AS api_key_configured,
                    k.created_at AS api_key_created_at
@@ -386,6 +422,8 @@ async function getAdminServicesAPIRoute(_req: Request, res: Response) {
                 details: service.details,
                 manualOverride: isDatabaseBoolean(service.manual_override),
                 whitelistRequired: isDatabaseBoolean(service.whitelist_required),
+                serviceType: service.service_type,
+                thnlinkEnabled: isDatabaseBoolean(service.thnlink_enabled),
                 apiKeyConfigured: isDatabaseBoolean(service.api_key_configured),
                 apiKeyCreatedAt: service.api_key_created_at,
                 lastReportedAt: service.last_reported_at,
@@ -404,7 +442,10 @@ async function createServiceAPIRoute(req: Request, res: Response) {
     const admin = requireAdmin(res);
     if (!admin) return;
 
-    const { name, address, status, details, manualOverride, whitelistRequired } = req.body || {};
+    const { name, address, status, details, manualOverride, whitelistRequired, serviceType, thnlinkEnabled } = req.body || {};
+    const configuredType = serviceType === undefined ? 'minecraft' : serviceType;
+    const configuredThn = thnlinkEnabled === undefined ? serviceType === undefined : thnlinkEnabled;
+    const configuredWhitelist = whitelistRequired === undefined ? false : whitelistRequired;
     const serviceName = typeof name === 'string' ? name.trim() : '';
     const serviceAddress = typeof address === 'string' ? address.trim() : '';
     const serviceDetails = typeof details === 'string' ? details.trim() : '';
@@ -413,7 +454,7 @@ async function createServiceAPIRoute(req: Request, res: Response) {
         typeof status !== 'string' || !VALID_SERVICE_STATUSES.includes(status as typeof VALID_SERVICE_STATUSES[number]) ||
         (details !== undefined && typeof details !== 'string') || serviceDetails.length > 255 ||
         (manualOverride !== undefined && typeof manualOverride !== 'boolean') ||
-        (whitelistRequired !== undefined && typeof whitelistRequired !== 'boolean')) {
+        !isValidServiceConfiguration(configuredType, configuredThn, configuredWhitelist)) {
         sendFailure(res, 400, 'Ungültige Service-Angaben');
         return;
     }
@@ -429,9 +470,9 @@ async function createServiceAPIRoute(req: Request, res: Response) {
                 const sortOrder = Number(sortRows[0]?.next_sort_order || 1);
                 const inserted = await connection.query<UpsertResult>(
                     `INSERT INTO service_status
-                        (name, address, status, details, sort_order, updated_by, manual_override, whitelist_required)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-                    [serviceName, serviceAddress, status, serviceDetails, sortOrder, admin.userId, manualOverride ?? false, whitelistRequired ?? false]
+                        (name, address, status, details, sort_order, updated_by, manual_override, whitelist_required, service_type, thnlink_enabled)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [serviceName, serviceAddress, status, serviceDetails, sortOrder, admin.userId, manualOverride ?? false, configuredWhitelist, configuredType, configuredThn]
                 );
                 const id = Number(inserted.insertId);
                 if (!Number.isSafeInteger(id) || id <= 0) throw new Error('Service ID was not returned after insert');
@@ -445,7 +486,7 @@ async function createServiceAPIRoute(req: Request, res: Response) {
                     res,
                     admin.userId,
                     'admin.service.created',
-                    { name: serviceName, address: serviceAddress, status },
+                    { name: serviceName, address: serviceAddress, status, serviceType: configuredType, thnlinkEnabled: configuredThn },
                     'service',
                     String(id)
                 );
@@ -532,7 +573,7 @@ async function updateServiceAPIRoute(req: Request, res: Response) {
     if (!admin) return;
 
     const serviceId = Number(req.params.id);
-    const { name, address, status, details, manualOverride, whitelistRequired } = req.body || {};
+    const { name, address, status, details, manualOverride, whitelistRequired, serviceType, thnlinkEnabled } = req.body || {};
     const serviceName = typeof name === 'string' ? name.trim() : '';
     const serviceAddress = typeof address === 'string' ? address.trim() : '';
     const serviceDetails = typeof details === 'string' ? details.trim() : '';
@@ -542,18 +583,26 @@ async function updateServiceAPIRoute(req: Request, res: Response) {
         typeof status !== 'string' || !VALID_SERVICE_STATUSES.includes(status as typeof VALID_SERVICE_STATUSES[number]) ||
         typeof details !== 'string' || serviceDetails.length > 255 ||
         typeof manualOverride !== 'boolean' ||
-        typeof whitelistRequired !== 'boolean') {
+        typeof whitelistRequired !== 'boolean' ||
+        (serviceType !== undefined && serviceType !== 'generic' && serviceType !== 'minecraft') ||
+        (thnlinkEnabled !== undefined && typeof thnlinkEnabled !== 'boolean')) {
         sendFailure(res, 400, 'Ungültige Service-Angaben');
         return;
     }
 
     try {
-        const services = await query<{ id: number }>(
-            'SELECT id FROM service_status WHERE id = ? LIMIT 1',
+        const services = await query<{ id: number; service_type: ServiceType; thnlink_enabled: unknown }>(
+            'SELECT id, service_type, thnlink_enabled FROM service_status WHERE id = ? LIMIT 1',
             [serviceId]
         );
         if (!services[0]) {
             sendFailure(res, 404, 'Service nicht gefunden');
+            return;
+        }
+        const configuredType = serviceType === undefined ? services[0].service_type : serviceType;
+        const configuredThn = thnlinkEnabled === undefined ? isDatabaseBoolean(services[0].thnlink_enabled) : thnlinkEnabled;
+        if (!isValidServiceConfiguration(configuredType, configuredThn, whitelistRequired)) {
+            sendFailure(res, 400, 'Ungültige Service-Angaben');
             return;
         }
 
@@ -561,16 +610,16 @@ async function updateServiceAPIRoute(req: Request, res: Response) {
             {
                 sql: `UPDATE service_status
                       SET name = ?, address = ?, status = ?, details = ?, updated_by = ?,
-                          manual_override = ?, whitelist_required = ?, last_reported_at = NULL,
+                          manual_override = ?, whitelist_required = ?, service_type = ?, thnlink_enabled = ?, last_reported_at = NULL,
                           players_online = NULL, players_max = NULL, minecraft_version = NULL
                       WHERE id = ?`,
-                params: [serviceName, serviceAddress, status, serviceDetails, admin.userId, manualOverride, whitelistRequired, serviceId]
+                params: [serviceName, serviceAddress, status, serviceDetails, admin.userId, manualOverride, whitelistRequired, configuredType, configuredThn, serviceId]
             },
             auditStatement(
                 res,
                 admin.userId,
                 'admin.service.updated',
-                { name: serviceName, address: serviceAddress, status },
+                { name: serviceName, address: serviceAddress, status, serviceType: configuredType, thnlinkEnabled: configuredThn },
                 'service',
                 String(serviceId)
             )

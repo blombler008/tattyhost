@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import type { UpsertResult } from 'mariadb';
 import { query, type SqlParameter, withDatabaseTransaction } from '@tattyhost/SQLutils';
-import { authenticateServiceApiKey } from './api-services.ts';
+import { authenticateMinecraftService } from './api-services.ts';
 import { saveUserMinecraftAccount } from './api-account-minecraft.ts';
 import { auditStatement, logApiFailure, logAuditCommitted, requireAdmin, requireUser, sendFailure, sendServerFailure, sendSuccess } from './api-shared.ts';
 import {
@@ -95,7 +95,7 @@ async function repairInvalidWhitelistNames(serviceId: number) {
 }
 
 async function getWhitelistAPIRoute(req: Request, res: Response) {
-    const serviceAuth = await authenticateServiceApiKey(req, res);
+    const serviceAuth = await authenticateMinecraftService(req, res);
     if (!serviceAuth) return;
 
     try {
@@ -176,12 +176,12 @@ async function createWhitelistRequestAPIRoute(req: Request, res: Response) {
         const result = await withDatabaseTransaction(
             ['SELECT', 'SELECT', 'WRITE', 'INSERT'],
             async (connection) => {
-                const services = await connection.query<Array<{ id: number; whitelist_required: unknown }>>(
-                    'SELECT id, whitelist_required FROM service_status WHERE id = ? FOR UPDATE',
+                const services = await connection.query<Array<{ id: number; whitelist_required: unknown; service_type: string }>>(
+                    'SELECT id, whitelist_required, service_type FROM service_status WHERE id = ? FOR UPDATE',
                     [serviceId]
                 );
                 if (!services[0]) return 'service_missing' as const;
-                if (!Number(services[0].whitelist_required)) return 'not_required' as const;
+                if (services[0].service_type !== 'minecraft' || !Number(services[0].whitelist_required)) return 'not_required' as const;
 
                 const requests = await connection.query<Array<{
                     id: number;
@@ -422,11 +422,12 @@ async function reviewWhitelistRequestAPIRoute(req: Request, res: Response) {
                 ? ['SELECT', 'SELECT', 'SELECT', 'INSERT', 'UPDATE', 'UPDATE', 'INSERT']
                 : ['SELECT', 'SELECT', 'UPDATE', 'INSERT'],
             async (connection) => {
-                const services = await connection.query<Array<{ id: number; whitelist_revision: number | string }>>(
-                    'SELECT id, whitelist_revision FROM service_status WHERE id = ? FOR UPDATE',
+                const services = await connection.query<Array<{ id: number; whitelist_revision: number | string; service_type: string }>>(
+                    'SELECT id, whitelist_revision, service_type FROM service_status WHERE id = ? FOR UPDATE',
                     [initial.service_id]
                 );
                 if (!services[0]) return { result: 'service_missing' as const, revision: 0 };
+                if (action === 'approved' && services[0].service_type !== 'minecraft') return { result: 'not_minecraft' as const, revision: 0 };
 
                 const requests = await connection.query<Array<{
                     id: number;
@@ -508,6 +509,10 @@ async function reviewWhitelistRequestAPIRoute(req: Request, res: Response) {
             sendFailure(res, 409, 'Dieser Antrag wurde bereits bearbeitet');
             return;
         }
+        if (outcome.result === 'not_minecraft') {
+            sendFailure(res, 400, 'Whitelist nur für Minecraft-Server verfügbar');
+            return;
+        }
         if (outcome.result === 'full') {
             sendFailure(res, 409, 'Die Whitelist ist voll');
             return;
@@ -559,11 +564,12 @@ async function grantWhitelistAPIRoute(req: Request, res: Response) {
                     'SELECT username FROM users WHERE uuid = ? LIMIT 1',
                     [admin.userId]
                 );
-                const services = await connection.query<Array<{ whitelist_revision: number | string }>>(
-                    'SELECT whitelist_revision FROM service_status WHERE id = ? FOR UPDATE',
+                const services = await connection.query<Array<{ whitelist_revision: number | string; service_type: string }>>(
+                    'SELECT whitelist_revision, service_type FROM service_status WHERE id = ? FOR UPDATE',
                     [serviceId]
                 );
                 if (!services[0]) return { result: 'service_missing' as const, revision: 0 };
+                if (services[0].service_type !== 'minecraft') return { result: 'not_minecraft' as const, revision: 0 };
 
                 const requests = await connection.query<Array<{ id: number; status: string; requested_by: string | null }>>(
                     `SELECT id, status, requested_by FROM service_whitelist_requests
@@ -643,6 +649,10 @@ async function grantWhitelistAPIRoute(req: Request, res: Response) {
         }
         if (outcome.result === 'duplicate') {
             sendFailure(res, 409, 'Für dieses Minecraft-Profil existiert bereits eine Freigabe oder ein Antrag eines anderen Benutzers');
+            return;
+        }
+        if (outcome.result === 'not_minecraft') {
+            sendFailure(res, 400, 'Whitelist nur für Minecraft-Server verfügbar');
             return;
         }
         if (outcome.result === 'full') {

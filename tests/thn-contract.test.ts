@@ -5,10 +5,12 @@ import test from 'node:test';
 import express from 'express';
 import { closeDatabasePool } from '@tattyhost/SQLutils';
 import { createAdminThnRouter } from '../src/api/api-admin-thn.ts';
-import { createAdminServicesRouter } from '../src/api/api-services.ts';
+import { createAdminServicesRouter, createMinecraftServiceAuthenticator } from '../src/api/api-services.ts';
 import { createOwnStatsHandler, createThnPlayersRouter } from '../src/api/api-thn-players.ts';
 import { isCanonicalPlayerUuid, isLinkCode, ownPlayerStats, parsePlayerBatch, parsePlayerStats } from '../src/api/thn-player-contract.ts';
 import { isLoopbackHost, isPlayerBackupId, isWorldBackupId, isWorldName, PluginApiError, ThnPluginClient } from '../src/api/thn-plugin-client.ts';
+import { fetchMinecraftSkin } from '../src/api/minecraft-skin.ts';
+import { createOwnSkinHandler, getAdminSkin } from '../src/api/api-minecraft-skin.ts';
 
 const uuid = '01234567-89ab-cdef-0123-456789abcdef';
 const now = 1_764_000_000_000;
@@ -18,6 +20,96 @@ const stats = {
     gameMode: 'SURVIVAL', world: 'world', x: 1, y: 64, z: 2
 };
 test.after(async () => { await closeDatabasePool(); });
+
+test('skin loading only follows official texture URLs and limits image data', async () => {
+    const hash = 'a'.repeat(64);
+    const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+    const profile = (url: string) => JSON.stringify({
+        id: uuid.replace(/-/g, ''),
+        properties: [{ name: 'textures', value: Buffer.from(JSON.stringify({ textures: { SKIN: { url } } })).toString('base64') }]
+    });
+    const urls: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+        urls.push(String(input));
+        return urls.length === 1
+            ? new Response(profile(`http://textures.minecraft.net/texture/${hash}`))
+            : new Response(png, { headers: { 'Content-Type': 'image/png' } });
+    };
+    assert.deepEqual(await fetchMinecraftSkin(uuid, fetcher), png);
+    assert.equal(urls[1], `https://textures.minecraft.net/texture/${hash}`);
+    let calls = 0;
+    await assert.rejects(() => fetchMinecraftSkin(uuid, async () => {
+        calls++;
+        return new Response(profile(`https://textures.minecraft.net.evil.example/texture/${hash}`));
+    }));
+    assert.equal(calls, 1);
+    await assert.rejects(() => fetchMinecraftSkin(uuid, async (input) =>
+        String(input).includes('sessionserver') ? new Response(profile(`https://textures.minecraft.net/texture/${hash}`))
+            : new Response(Buffer.alloc(1024 * 1024 + 1), { headers: { 'Content-Type': 'image/png' } })));
+    assert.equal(await fetchMinecraftSkin(uuid, async () => new Response(JSON.stringify({ id: uuid.replace(/-/g, ''), properties: [] }))), null);
+});
+
+test('skin routes require a logged-in owner or an administrator before querying', async () => {
+    const app = express();
+    app.use((req, res, next) => {
+        const userId = req.get('x-user');
+        if (userId) res.locals.ssrAuth = { session: { userId, role: 'user' } };
+        next();
+    });
+    let skinFetches = 0;
+    app.get('/api/account/minecraft/:uuid/skin', createOwnSkinHandler(
+        async (userId, playerUuid) => userId === 'owner' && playerUuid === uuid,
+        async () => { skinFetches++; return Buffer.from('skin'); }
+    ));
+    app.get('/api/admin/users/:uuid/minecraft/:playerUuid/skin', getAdminSkin);
+    const server = http.createServer(app);
+    const port = await listen(server);
+    try {
+        assert.equal((await fetch(`http://127.0.0.1:${port}/api/account/minecraft/${uuid}/skin`)).status, 401);
+        assert.equal((await fetch(`http://127.0.0.1:${port}/api/account/minecraft/${uuid}/skin`, { headers: { 'x-user': 'user' } })).status, 404);
+        assert.equal(skinFetches, 0);
+        assert.equal((await fetch(`http://127.0.0.1:${port}/api/account/minecraft/${uuid}/skin`, { headers: { 'x-user': 'owner' } })).status, 200);
+        assert.equal(skinFetches, 1);
+        assert.equal((await fetch(`http://127.0.0.1:${port}/api/admin/users/user/minecraft/${uuid}/skin`, { headers: { 'x-user': 'user' } })).status, 403);
+    } finally {
+        server.close();
+        await once(server, 'close');
+    }
+});
+
+test('service type and THNLink flag gate the appropriate plugin capabilities', async () => {
+    const app = express();
+    const auth = createMinecraftServiceAuthenticator(
+        async (req, res) => {
+            if (req.get('authorization') !== 'Bearer valid') {
+                res.status(401).json({ error: 'invalid' });
+                return null;
+            }
+            return { serviceId: 7, actorId: null };
+        },
+        async () => ({ service_type: serviceType, thnlink_enabled: enabled })
+    );
+    let serviceType = 'generic';
+    let enabled = false;
+    app.get('/:feature', async (req, res) => {
+        if (await auth(req, res, req.params.feature === 'thn')) res.status(204).end();
+    });
+    const server = http.createServer(app);
+    const port = await listen(server);
+    const request = (feature: string, authorized = true) => fetch(`http://127.0.0.1:${port}/${feature}`, { headers: authorized ? { Authorization: 'Bearer valid' } : {} });
+    try {
+        assert.equal((await request('thn', false)).status, 401);
+        assert.equal((await request('whitelist')).status, 403);
+        serviceType = 'minecraft';
+        assert.equal((await request('whitelist')).status, 204);
+        assert.equal((await request('thn')).status, 403);
+        enabled = true;
+        assert.equal((await request('thn')).status, 204);
+    } finally {
+        server.close();
+        await once(server, 'close');
+    }
+});
 
 async function listen(server: http.Server): Promise<number> {
     server.listen(0, '127.0.0.1');
@@ -56,7 +148,7 @@ test('own stats route only returns data when the session owns the verified UUID'
         next();
     });
     app.get('/own/:uuid', createOwnStatsHandler(async (requestedUuid, userId) =>
-        requestedUuid === uuid && userId === 'owner' ? JSON.stringify(stats) : null));
+        requestedUuid === uuid && userId === 'owner' ? { stats_json: JSON.stringify(stats), server_name: 'Vanilla' } : null));
     const server = http.createServer(app);
     const port = await listen(server);
     try {
@@ -66,6 +158,7 @@ test('own stats route only returns data when the session owns the verified UUID'
         assert.equal(owner.status, 200);
         const body = await owner.json() as { player: Record<string, unknown> };
         assert.equal(body.player.uuid, uuid);
+        assert.equal(body.player.serverName, 'Vanilla');
         assert.equal('x' in body.player, false);
     } finally {
         server.close();

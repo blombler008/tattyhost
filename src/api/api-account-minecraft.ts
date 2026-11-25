@@ -2,6 +2,8 @@ import { Router, type Request, type Response } from 'express';
 import { deleteToken, verifyPassword } from '@tattyhost/CryptoUtils';
 import { execute, executeTransaction, query } from '@tattyhost/SQLutils';
 import { auditStatement, logApiFailure, logAuditCommitted, requireAdmin, requireUser, sendFailure, sendServerFailure, sendSuccess } from './api-shared.ts';
+import { getAdminSkin, getOwnSkin } from './api-minecraft-skin.ts';
+import { ownPlayerStats, parsePlayerStats } from './thn-player-contract.ts';
 import {
     canonicalizeMinecraftUuid,
     InvalidMinecraftNameError,
@@ -194,12 +196,22 @@ async function listAdminMinecraftAccountsAPIRoute(req: Request, res: Response) {
     if (!requireAdmin(res)) return;
 
     try {
-        const accounts = await query<{ player_uuid: string; player_name: string; created_at: Date }>(
-            `SELECT player_uuid, player_name, created_at
-             FROM user_minecraft_accounts WHERE user_uuid = ? ORDER BY created_at`,
+        const accounts = await query<{ player_uuid: string; player_name: string; created_at: Date; verified: number | boolean; stats_json: string | null; server_name: string | null }>(
+            `SELECT a.player_uuid, a.player_name, a.created_at, v.player_uuid IS NOT NULL AS verified, p.stats_json, s.name AS server_name
+             FROM user_minecraft_accounts a
+             LEFT JOIN verified_minecraft_links v ON v.user_uuid = a.user_uuid AND v.player_uuid = a.player_uuid
+             LEFT JOIN minecraft_player_stats p ON p.player_uuid = a.player_uuid
+             LEFT JOIN service_status s ON s.id = p.service_id
+             WHERE a.user_uuid = ? ORDER BY a.created_at`,
             [String(req.params.uuid)]
         );
-        sendSuccess(res, { accounts });
+        const now = Date.now();
+        res.setHeader('Cache-Control', 'no-store');
+        sendSuccess(res, { accounts: accounts.map(({ stats_json, verified, server_name, ...account }) => {
+            const stats = stats_json === null ? null : parsePlayerStats(JSON.parse(stats_json), now);
+            if (stats_json !== null && !stats) throw new Error('Ungültige gespeicherte Spielerstatistik');
+            return { ...account, verified: Number(verified) === 1, stats: stats ? { ...ownPlayerStats(stats, now), serverName: server_name } : null };
+        }) });
     } catch (error) {
         logApiFailure(res, 'api.admin.minecraft_load_failed', error);
         sendServerFailure(res);
@@ -305,6 +317,7 @@ async function removeAdminMinecraftAccountAPIRoute(req: Request, res: Response) 
 export function createAdminMinecraftRouter(): Router {
     const router = Router({ mergeParams: true });
     router.get('/', listAdminMinecraftAccountsAPIRoute);
+    router.get('/:playerUuid/skin', getAdminSkin);
     router.post('/', addAdminMinecraftAccountAPIRoute);
     router.put('/:playerUuid', refreshAdminMinecraftAccountAPIRoute);
     router.delete('/:playerUuid', removeAdminMinecraftAccountAPIRoute);
@@ -315,6 +328,7 @@ export function createAccountMinecraftRouter(): Router {
     const router = Router();
     router.get('/account/whitelist', getOwnWhitelistAPIRoute);
     router.get('/account/minecraft', getMinecraftAccountsAPIRoute);
+    router.get('/account/minecraft/:uuid/skin', getOwnSkin);
     router.post('/account/minecraft', addMinecraftAccountAPIRoute);
     router.delete('/account/minecraft/:uuid', removeMinecraftAccountAPIRoute);
     router.delete('/account', deleteOwnAccountAPIRoute);
